@@ -80,7 +80,7 @@ export class CatalogEntry {
 		if (levels === undefined) {
 			return [];
 		}
-		if (!Array.isArray(levels)) {
+		if (!Array.isArray(levels) || !levels.every((level) => typeof level === "string")) {
 			throw this.failure("has an invalid reasoning.effort_levels");
 		}
 		return levels;

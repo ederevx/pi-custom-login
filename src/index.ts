@@ -1,5 +1,3 @@
-/** Composition only: model lists come from each provider's refresh hook. */
-
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { ProviderCommand } from "./provider-command.ts";

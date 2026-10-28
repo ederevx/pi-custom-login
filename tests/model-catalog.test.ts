@@ -110,13 +110,17 @@ test("a body without a model list rejects", async () => {
 	await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "no model list");
 });
 
+const VALID = { id: "valid" };
 const MALFORMED: Array<[string, unknown]> = [
-	["a non-object entry", [{}]],
+	["a non-object entry", [null]],
+	["a missing id", [{}]],
 	["an empty id", [{ id: "   " }]],
 	["a non-string name", [{ id: "model", display_name: 7 }]],
 	["a non-positive context window", [{ id: "model", context_window: 0 }]],
 	["a non-boolean vision", [{ id: "model", vision: "yes" }]],
-	["malformed effort levels", [{ id: "model", reasoning: { effort_levels: "high" } }]],
+	["non-list effort levels", [{ id: "model", reasoning: { effort_levels: "high" } }]],
+	["non-string effort levels", [{ id: "model", reasoning: { effort_levels: [7] } }]],
+	["a valid entry ahead of a bad one", [VALID, { id: "model", vision: null }]],
 ];
 
 for (const [description, data] of MALFORMED) {

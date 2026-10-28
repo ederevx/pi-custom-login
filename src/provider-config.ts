@@ -16,15 +16,6 @@ export interface ProviderEntry {
 	apiKey?: string;
 }
 
-/** The catalog fields a `/models` response may carry. */
-export interface CatalogModel {
-	id: string;
-	display_name?: string;
-	context_window?: number;
-	vision?: boolean;
-	reasoning?: { effort_levels?: string[] };
-}
-
 /** The part of pi's refresh context this extension uses. */
 export interface CatalogRefreshContext {
 	credential?: { type: string; key?: string };
