@@ -9,7 +9,7 @@ endpoint without editing this package.
 ## Install
 
 ```bash
-pi install git:github.com/ederevx/pi-custom-login@v0.2.2
+pi install git:github.com/ederevx/pi-custom-login@v0.2.3
 ```
 
 The package has no runtime dependencies; it uses the host-provided
@@ -36,8 +36,10 @@ Run `/login <id>` afterwards to store the key in pi's credential store, then
 
 ## Failing over when a response does not start
 
-`/providers settings <id>` picks one model from pi's catalog to take over for
-all of that provider's models, plus a response-start timeout. A request whose
+`/providers settings <id>` opens one screen, laid out like `/models`: a
+fallback row that opens a searchable list of the models pi can offer, and a
+response-start timeout row. Enter edits the selected row, `Ctrl+S` saves, `Esc`
+cancels without writing. A request whose
 response has not begun producing content within that timeout aborts the
 attempt and is re-sent to the fallback model; the abort is best-effort, so the
 original server may still finish its own work.
@@ -50,8 +52,8 @@ The fallback target must be a physical chat model of another provider that
 accepts the same inputs and has at least as large a context window. It is
 re-validated when it is used, and it is dispatched once: a fallback provider
 that has its own fallback configured cannot chain a second hop. Choosing
-`Disabled` removes the setting, and a provider without one is registered
-exactly as before.
+`Disabled` removes the setting, a saved model that left the catalog is kept and
+marked, and a provider without a fallback is registered exactly as before.
 
 ## How the model list is built
 
