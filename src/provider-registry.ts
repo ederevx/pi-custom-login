@@ -6,18 +6,15 @@ import { DEFAULT_API, type ProviderEntry } from "./provider-config.ts";
 import { ModelCatalog } from "./model-catalog.ts";
 import { ProviderFallback, type FallbackRegistry } from "./provider-fallback.ts";
 
+type BoundRegistry = FallbackRegistry & Pick<ModelRegistry, "getAll">;
+
 export class ProviderRegistry {
 	private readonly fallback = new ProviderFallback();
-	private registry: FallbackRegistry | undefined;
-	private store: { all(): Record<string, ProviderEntry> } | undefined;
+	private registry: BoundRegistry | undefined;
 
 	constructor(private readonly pi: ExtensionAPI) {}
 
-	attachStore(store: { all(): Record<string, ProviderEntry> }): void {
-		this.store = store;
-	}
-
-	bindSession(registry: ModelRegistry): void {
+	bindSession(registry: BoundRegistry): void {
 		this.registry = registry;
 		this.fallback.bindRegistry(registry);
 	}
