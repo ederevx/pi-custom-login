@@ -89,47 +89,155 @@ test("an offered model is not reported as unavailable", () => {
 	assertEq(SettingsScreen.unavailable(stored, [{ provider: "other", id: "fits" }]), undefined);
 });
 
-/** A TUI context whose custom() builds the component and captures its result. */
+/** A TUI context whose custom() builds the component; the result resolves when the screen calls done. */
 function screenContext() {
-	const captured: { component?: { render(width: number): string[]; handleInput(data: string): void }; resolved: unknown } = { resolved: "unset" };
+	let component: { render(width: number): string[]; handleInput(data: string): void } | undefined;
+	const keybindings = {
+		matches: (data: string, id: string): boolean => {
+			const map: Record<string, string[]> = {
+				"tui.select.up": ["\u001b[A"],
+				"tui.select.down": ["\u001b[B"],
+				"tui.select.confirm": ["\r"],
+				"tui.select.cancel": ["\u001b"],
+			};
+			return (map[id] ?? []).includes(data);
+		},
+	};
 	const theme = { fg: (_key: string, text: string) => text, bold: (text: string) => text };
+	let settle: (value: unknown) => void = () => {};
 	const ctx = {
 		mode: "tui",
 		ui: {
-			custom: async (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value?: unknown) => void) => { render(width: number): string[]; handleInput(data: string): void }) => {
-				captured.component = factory({ requestRender: () => {} }, theme, {}, (value?: unknown) => {
-					captured.resolved = value;
+			custom: (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value?: unknown) => void) => { render(width: number): string[]; handleInput(data: string): void }) => {
+				const opened = new Promise<unknown>((resolve) => {
+					settle = resolve;
 				});
-				return undefined;
+				component = factory({ requestRender: () => {} }, theme, keybindings, (value?: unknown) => settle(value));
+				return opened;
 			},
 			notify: () => {},
 		},
 	} as unknown as ExtensionCommandContext;
-	return { captured, ctx };
+	return { component: () => component!, ctx };
 }
 
 test("saving the screen returns the edited configuration", async () => {
-	const { captured, ctx } = screenContext();
+	const screen = screenContext();
 	const stored: ProviderFallbackConfig = { model: { provider: "other", id: "fits" }, timeoutMs: 5000 };
-	assertEq(await SettingsScreen.open("verboo", stored, [{ provider: "other", id: "fits" }], ctx), undefined);
-	const rendered = captured.component!.render(80).join("\n");
+	const opened = SettingsScreen.open("verboo", stored, [{ provider: "other", id: "fits" }], screen.ctx);
+	await tick();
+	const rendered = screen.component().render(80).join("\n");
 	assertEq(rendered.includes("Fallback for verboo"), true);
 	assertEq(rendered.includes("other/fits"), true);
 	assertEq(rendered.includes("5000 ms"), true);
-	captured.component!.handleInput("\u0013");
-	assertEq(JSON.stringify(captured.resolved), '{"model":{"provider":"other","id":"fits"},"timeoutMs":5000}');
+	screen.component().handleInput("\u0013");
+	assertEq(JSON.stringify(await opened), '{"model":{"provider":"other","id":"fits"},"timeoutMs":5000}');
 });
 
-test("cancelling the screen writes nothing", async () => {
-	const { captured, ctx } = screenContext();
-	await SettingsScreen.open("verboo", undefined, [], ctx);
-	captured.component!.handleInput("\u001b");
-	assertEq(captured.resolved, undefined);
+test("cancelling the screen resolves without a configuration", async () => {
+	const screen = screenContext();
+	const opened = SettingsScreen.open("verboo", undefined, [], screen.ctx);
+	await tick();
+	screen.component().handleInput("\u001b");
+	assertEq(await opened, undefined);
 });
 
 test("a disabled provider saves as null so the caller deletes the setting", async () => {
-	const { captured, ctx } = screenContext();
-	await SettingsScreen.open("verboo", undefined, [{ provider: "other", id: "fits" }], ctx);
-	captured.component!.handleInput("\u0013");
-	assertEq(captured.resolved, null);
+	const screen = screenContext();
+	const opened = SettingsScreen.open("verboo", undefined, [{ provider: "other", id: "fits" }], screen.ctx);
+	await tick();
+	screen.component().handleInput("\u0013");
+	assertEq(await opened, null);
 });
+
+test("the fallback submenu searches inside provider/model and selects with Enter", async () => {
+	const screen = screenContext();
+	const candidates = [
+		{ provider: "other", id: "fits" },
+		{ provider: "another", id: "wide" },
+	];
+	const opened = SettingsScreen.open("verboo", undefined, candidates, screen.ctx);
+	await tick();
+	screen.component().handleInput("\r");
+	await tick();
+	screen.component().handleInput("w");
+	screen.component().handleInput("i");
+	screen.component().handleInput("d");
+	await tick();
+	screen.component().handleInput("\r");
+	await tick();
+	screen.component().handleInput("\u0013");
+	assertEq(JSON.stringify(await opened), '{"model":{"provider":"another","id":"wide"},"timeoutMs":30000}');
+});
+
+test("escape inside the fallback submenu returns without changing the draft", async () => {
+	const screen = screenContext();
+	const stored: ProviderFallbackConfig = { model: { provider: "other", id: "fits" }, timeoutMs: 7000 };
+	const opened = SettingsScreen.open("verboo", stored, [{ provider: "other", id: "fits" }], screen.ctx);
+	await tick();
+	screen.component().handleInput("\r");
+	await tick();
+	screen.component().handleInput("\u001b");
+	await tick();
+	screen.component().handleInput("\u0013");
+	assertEq(JSON.stringify(await opened), '{"model":{"provider":"other","id":"fits"},"timeoutMs":7000}');
+});
+
+test("a saved model that left the catalog opens without becoming Disabled", async () => {
+	const screen = screenContext();
+	const stored: ProviderFallbackConfig = { model: { provider: "gone", id: "m" }, timeoutMs: 4000 };
+	const opened = SettingsScreen.open("verboo", stored, [{ provider: "other", id: "fits" }], screen.ctx);
+	await tick();
+	const rendered = screen.component().render(80).join("\n");
+	assertEq(rendered.includes("gone/m (saved; unavailable)"), true);
+	screen.component().handleInput("\u0013");
+	assertEq(JSON.stringify(await opened), '{"model":{"provider":"gone","id":"m"},"timeoutMs":4000}');
+});
+
+test("an invalid timeout keeps the editor open and leaves the value alone", async () => {
+	const screen = screenContext();
+	const opened = SettingsScreen.open("verboo", undefined, [], screen.ctx);
+	await tick();
+	screen.component().handleInput("\u001b[B");
+	screen.component().handleInput("\r");
+	await tick();
+	screen.component().handleInput("x");
+	screen.component().handleInput("\r");
+	await tick();
+	let settled = false;
+	void opened.then(() => {
+		settled = true;
+	});
+	await tick();
+	assertEq(settled, false);
+	screen.component().handleInput("\u001b");
+	await tick();
+	screen.component().handleInput("\u0013");
+	assertEq(await opened, null);
+});
+
+test("a valid timeout replaces the stored value", async () => {
+	const screen = screenContext();
+	const stored: ProviderFallbackConfig = { model: { provider: "other", id: "fits" }, timeoutMs: 30000 };
+	const opened = SettingsScreen.open("verboo", stored, [{ provider: "other", id: "fits" }], screen.ctx);
+	await tick();
+	screen.component().handleInput("\u001b[B");
+	screen.component().handleInput("\r");
+	await tick();
+	screen.component().handleInput("\u0005");
+	for (let index = 0; index < 5; index += 1) {
+		screen.component().handleInput("\u007f");
+	}
+	for (const digit of "450") {
+		screen.component().handleInput(digit);
+	}
+	screen.component().handleInput("\r");
+	await tick();
+	screen.component().handleInput("\u0013");
+	assertEq(JSON.stringify(await opened), '{"model":{"provider":"other","id":"fits"},"timeoutMs":450}');
+});
+
+/** Lets a pending custom() factory run. */
+function tick(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve));
+}

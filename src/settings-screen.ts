@@ -1,7 +1,22 @@
 /** The one-screen editor for a provider's fallback, laid out like pi's own settings lists. */
 
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Container, Input, SelectList, type SelectListTheme, type SettingItem, SettingsList, Spacer, Text, type Theme } from "@earendil-works/pi-tui";
+import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
+import {
+	Container,
+	fuzzyFilter,
+	Input,
+	Key,
+	type KeybindingsManager,
+	matchesKey,
+	SelectList,
+	type SelectItem,
+	type SelectListTheme,
+	type SettingItem,
+	SettingsList,
+	type SettingsListTheme,
+	Spacer,
+	Text,
+} from "@earendil-works/pi-tui";
 
 import { DEFAULT_FALLBACK_TIMEOUT_MS, type ModelRef, type ProviderFallbackConfig } from "./provider-config.ts";
 import { ProviderSettings } from "./provider-settings.ts";
@@ -12,10 +27,7 @@ export interface SettingsDraft {
 	timeoutMs: number;
 }
 
-/** Ctrl+S saves, so Escape can stay "leave this field" without discarding work. */
-const SAVE = "\u0013";
 const DISABLED = "Disabled";
-
 
 export class SettingsScreen {
 	/** Rows shown by the editor, kept separate so the layout is assertable without a terminal. */
@@ -38,7 +50,7 @@ export class SettingsScreen {
 
 	/** A stored model the catalog no longer offers, shown rather than silently dropped. */
 	static unavailable(stored: ProviderFallbackConfig | undefined, candidates: readonly ModelRef[]): ModelRef | undefined {
-		if (!stored || SettingsScreen.offered(stored.model, candidates)) {
+		if (!stored || candidates.some((candidate) => ProviderSettings.label(candidate) === ProviderSettings.label(stored.model))) {
 			return undefined;
 		}
 		return stored.model;
@@ -57,14 +69,22 @@ export class SettingsScreen {
 		};
 		const unavailable = SettingsScreen.unavailable(stored, candidates);
 
-		return ctx.ui.custom<ProviderFallbackConfig | null | undefined>((tui, theme, _keybindings, done) => {
-			let editing = false;
+		return ctx.ui.custom<ProviderFallbackConfig | null | undefined>((tui, theme, keybindings, done) => {
+			let editing: (() => boolean) | undefined;
 			const container = new Container();
 			const list = new SettingsList(
-				SettingsScreen.rows(draft, candidates, unavailable, (next) => {
-					editing = next;
-					tui.requestRender();
-				}),
+				SettingsScreen.items(draft, unavailable).map((item) => ({
+					...item,
+					submenu: item.id === "fallback"
+						? SettingsScreen.pickFallback(draft, candidates, unavailable, theme, keybindings, (state) => {
+							editing = state;
+							tui.requestRender();
+						})
+						: SettingsScreen.editTimeout(theme, (state) => {
+							editing = state;
+							tui.requestRender();
+						}),
+				})),
 				6,
 				SettingsScreen.listTheme(theme),
 				(id, value) => {
@@ -85,8 +105,14 @@ export class SettingsScreen {
 			return {
 				render: (width: number) => container.render(width),
 				invalidate: () => container.invalidate(),
+				get focused(): boolean {
+					return list.focused;
+				},
+				set focused(value: boolean) {
+					list.focused = value;
+				},
 				handleInput: (data: string) => {
-					if (!editing && data === SAVE) {
+					if (!editing?.() && matchesKey(data, Key.ctrl("s"))) {
 						done(SettingsScreen.revision(draft));
 						return;
 					}
@@ -97,117 +123,152 @@ export class SettingsScreen {
 		}, { overlay: true });
 	}
 
-	/** Rows with their submenus attached; `items()` stays the pure description of the same rows. */
-	private static rows(
-		draft: SettingsDraft,
-		candidates: readonly ModelRef[],
-		unavailable: ModelRef | undefined,
-		editing: (open: boolean) => void,
-	): SettingItem[] {
-		return SettingsScreen.items(draft, unavailable).map((item) => ({
-			...item,
-			submenu: item.id === "fallback"
-				? SettingsScreen.pickFallback(draft, candidates, unavailable, editing)
-				: SettingsScreen.editTimeout(draft, editing),
-		}));
-	}
-
+	/** A searchable list of the models this provider may fall back to. */
 	private static pickFallback(
 		draft: SettingsDraft,
 		candidates: readonly ModelRef[],
 		unavailable: ModelRef | undefined,
-		editing: (open: boolean) => void,
+		theme: Theme,
+		keybindings: KeybindingsManager,
+		editing: (state: (() => boolean) | undefined) => void,
 	) {
 		return (current: string, done: (value?: string) => void) => {
-			editing(true);
-			const labels = [DISABLED, ...candidates.map(ProviderSettings.label)];
-			if (unavailable && !labels.includes(ProviderSettings.label(unavailable))) {
-				labels.push(SettingsScreen.describe(unavailable, undefined));
+			const all: SelectItem[] = [{ value: DISABLED, label: DISABLED }];
+			for (const candidate of candidates) {
+				all.push({ value: ProviderSettings.label(candidate), label: ProviderSettings.label(candidate) });
 			}
-			const items = labels.map((label) => ({ value: label, label }));
-			const list = new SelectList(items, 10, SettingsScreen.theme());
-			list.setSelectedIndex(Math.max(0, labels.indexOf(current)));
-			list.onSelect = (item) => {
-				editing(false);
-				done(item.value);
-			};
-			list.onCancel = () => {
-				editing(false);
-				done();
-			};
+			if (unavailable) {
+				all.push({ value: ProviderSettings.label(unavailable), label: SettingsScreen.describe(unavailable, unavailable) });
+			}
+			const initial = all.findIndex((item) => item.value === (draft.model ? ProviderSettings.label(draft.model) : DISABLED));
 			const host = new Container();
 			const search = new Input({ placeholder: "Search models" });
-			host.addChild(search);
-			host.addChild(new Spacer(1));
-			host.addChild(list);
+			const state = { list: SettingsScreen.selectList(all, SettingsScreen.listTheme(theme), Math.max(0, initial), done, editing) };
 			search.onSubmit = () => {
-				const selected = list.getSelectedItem();
+				const selected = state.list.getSelectedItem();
 				if (selected) {
-					editing(false);
-					done(selected.value);
+					editing(undefined);
+					done(selected.label);
 				}
 			};
+			editing(() => true);
+			host.addChild(search);
+			host.addChild(new Spacer(1));
+			host.addChild({
+				render: (width: number) => state.list.render(width),
+				invalidate: () => state.list.invalidate(),
+				handleInput: () => {},
+			});
 			return {
 				render: (width: number) => host.render(width),
 				invalidate: () => host.invalidate(),
+				get focused(): boolean {
+					return search.focused;
+				},
+				set focused(value: boolean) {
+					search.focused = value;
+				},
 				handleInput: (data: string) => {
+					if (
+						keybindings.matches(data, "tui.select.up") ||
+						keybindings.matches(data, "tui.select.down") ||
+						keybindings.matches(data, "tui.select.confirm") ||
+						keybindings.matches(data, "tui.select.cancel")
+					) {
+						state.list.handleInput(data);
+						return;
+					}
+					const before = search.getValue();
 					search.handleInput(data);
-					list.setFilter(search.getValue());
+					if (search.getValue() !== before) {
+						const visible = fuzzyFilter(all, search.getValue(), (item) => item.label);
+						state.list = SettingsScreen.selectList(visible, SettingsScreen.listTheme(theme), 0, done, editing);
+					}
 				},
 			};
 		};
 	}
 
-	private static editTimeout(draft: SettingsDraft, editing: (open: boolean) => void) {
+	private static selectList(
+		items: readonly SelectItem[],
+		theme: SettingsListTheme,
+		index: number,
+		done: (value?: string) => void,
+		editing: (state: (() => boolean) | undefined) => void,
+	): SelectList {
+		const selectTheme: SelectListTheme = {
+			selectedPrefix: theme.cursor,
+			selectedText: (text) => theme.label(text, true),
+			description: theme.description,
+			scrollInfo: theme.hint,
+			noMatch: theme.hint,
+		};
+		const list = new SelectList([...items], 10, selectTheme);
+		list.setSelectedIndex(index);
+		list.onSelect = (item) => {
+			editing(undefined);
+			done(item.label);
+		};
+		list.onCancel = () => {
+			editing(undefined);
+			done();
+		};
+		return list;
+	}
+
+	/** A prefilled timeout field that keeps itself open until the value is a whole number of milliseconds. */
+	private static editTimeout(
+		theme: Theme,
+		editing: (state: (() => boolean) | undefined) => void,
+	) {
 		return (current: string, done: (value?: string) => void) => {
-			editing(true);
 			const input = new Input({ placeholder: "Milliseconds" });
 			input.setValue(current.replace(" ms", ""));
+			const error = new Text("", 1, 0);
 			const host = new Container();
-			host.addChild(new Text("Response-start timeout in milliseconds", 1, 0));
-			host.addChild(input);
-			input.onSubmit = (value) => {
+			editing(() => true);
+			input.onSubmit = (value: string) => {
 				const parsed = ProviderSettings.parseTimeout(value);
 				if (parsed === undefined) {
+					error.setText(theme.fg("error", "Enter a whole number of milliseconds"));
 					return;
 				}
-				editing(false);
-				draft.timeoutMs = parsed;
+				editing(undefined);
 				done(`${parsed} ms`);
 			};
 			input.onEscape = () => {
-				editing(false);
+				editing(undefined);
 				done();
 			};
+			host.addChild(new Text("Response-start timeout in milliseconds", 1, 0));
+			host.addChild(input);
+			host.addChild(error);
 			return {
 				render: (width: number) => host.render(width),
 				invalidate: () => host.invalidate(),
+				get focused(): boolean {
+					return input.focused;
+				},
+				set focused(value: boolean) {
+					input.focused = value;
+				},
 				handleInput: (data: string) => input.handleInput(data),
 			};
 		};
 	}
 
-	private static listTheme(theme: Theme) {
+	private static listTheme(theme: Theme): SettingsListTheme {
 		return {
-			label: (text: string, selected: boolean) => (selected ? theme.fg("accent", text) : text),
-			value: (text: string, selected: boolean) => (selected ? theme.fg("accent", text) : theme.fg("muted", text)),
-			description: (text: string) => theme.fg("dim", text),
+			label: (text, selected) => (selected ? theme.fg("accent", text) : text),
+			value: (text, selected) => (selected ? theme.fg("accent", text) : theme.fg("muted", text)),
+			description: (text) => theme.fg("dim", text),
 			cursor: theme.fg("accent", "→ "),
-			hint: (text: string) => theme.fg("dim", text),
+			hint: (text) => theme.fg("dim", text),
 		};
-	}
-
-	private static theme(): SelectListTheme {
-		const plain = (text: string) => text;
-		return { selectedPrefix: plain, selectedText: plain, description: plain, scrollInfo: plain, noMatch: plain };
 	}
 
 	private static revision(draft: SettingsDraft): ProviderFallbackConfig | null {
 		return draft.model ? { model: draft.model, timeoutMs: draft.timeoutMs } : null;
-	}
-
-	private static offered(model: ModelRef, candidates: readonly ModelRef[]): boolean {
-		return candidates.some((candidate) => ProviderSettings.label(candidate) === ProviderSettings.label(model));
 	}
 
 	private static resolve(value: string, candidates: readonly ModelRef[], unavailable: ModelRef | undefined): ModelRef | null {
@@ -215,7 +276,10 @@ export class SettingsScreen {
 		if (match) {
 			return match;
 		}
-		return unavailable && SettingsScreen.describe(unavailable, undefined) === value ? unavailable : null;
+		if (unavailable && SettingsScreen.describe(unavailable, unavailable) === value) {
+			return unavailable;
+		}
+		return null;
 	}
 
 	private static describe(model: ModelRef | null, unavailable: ModelRef | undefined): string {

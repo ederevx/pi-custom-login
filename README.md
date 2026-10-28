@@ -9,7 +9,7 @@ endpoint without editing this package.
 ## Install
 
 ```bash
-pi install git:github.com/ederevx/pi-custom-login@v0.2.3
+pi install git:github.com/ederevx/pi-custom-login@v0.2.4
 ```
 
 The package has no runtime dependencies; it uses the host-provided
