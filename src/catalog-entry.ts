@@ -19,6 +19,7 @@ export class CatalogEntry {
 			id: this.id(),
 			name: this.optionalString("display_name") ?? this.id(),
 			api: DEFAULT_API,
+			...(/(^|\/)deepseek-/i.test(this.id()) ? { compat: { supportsDeveloperRole: false } } : {}),
 			reasoning: this.effortLevels().length > 0,
 			input: this.optionalBoolean("vision") ? ["text", "image"] : ["text"],
 			contextWindow: this.optionalNumber("context_window") ?? DEFAULT_CONTEXT_WINDOW,
