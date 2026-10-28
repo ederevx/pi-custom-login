@@ -41,6 +41,6 @@ export class ProviderStore {
 
 	private save(providers: Record<string, ProviderEntry>): void {
 		mkdirSync(dirname(this.path), { recursive: true });
-		writeFileSync(this.path, `${JSON.stringify({ providers }, null, "\t")}\n`);
+		writeFileSync(this.path, `${JSON.stringify({ providers }, null, "\t")}\n`, { mode: 0o600 });
 	}
 }
