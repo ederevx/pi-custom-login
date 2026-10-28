@@ -83,7 +83,7 @@ export class ProviderCommand {
 		ctx.ui.notify(lines.length === 0 ? "No custom providers" : lines.join("\n"), "info");
 	}
 
-	/** Picks a provider, refreshes the catalog, edits a detached draft, saves on commit. */
+	/** Picks a provider, refreshes the catalog, then edits its fallback, saving each change. */
 	private async settings(id: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify(`/${COMMAND_NAME} settings requires TUI mode`, "warning");
@@ -104,25 +104,32 @@ export class ProviderCommand {
 			ctx.ui.notify("Model catalog unavailable; settings unchanged", "warning");
 			return;
 		}
-		const picked = await SettingsScreen.open(providerId, stored.fallback, ProviderSettings.candidates(providerId, catalog), ctx);
-		if (picked === undefined) {
-			ctx.ui.notify("Settings unchanged", "info");
+		await SettingsScreen.open(
+			providerId,
+			stored.fallback,
+			ProviderSettings.candidates(providerId, catalog),
+			ctx,
+			(fallback) => {
+				const latest = this.store.all()[providerId];
+				if (!latest) {
+					return;
+				}
+				const { fallback: _previous, ...rest } = latest;
+				const entry: ProviderEntry = fallback === null ? rest : { ...rest, fallback };
+				this.store.add(providerId, entry);
+				this.registry.replace(providerId, entry);
+			},
+		);
+		const after = this.store.all()[providerId];
+		if (!after) {
+			ctx.ui.notify(`${providerId} was removed; settings not saved`, "warning");
 			return;
 		}
-		const entry: ProviderEntry = {
-			...stored,
-			...(picked === null ? {} : { fallback: picked }),
-		};
-		if (picked === null) {
-			delete entry.fallback;
-		}
-		this.store.add(providerId, entry);
-		this.registry.replace(providerId, entry);
+		const saved = after.fallback;
 		ctx.ui.notify(
-			picked === null
-				? `${providerId}: fallback disabled`
-				: `${providerId}: fails over to ${picked.model.provider}/${picked.model.id} after ${picked.timeoutMs} ms`,
-			"info",
+			saved
+				? `${providerId}: fails over to ${saved.model.provider}/${saved.model.id} after ${saved.timeoutMs} ms`
+				: `${providerId}: fallback disabled`,
 		);
 	}
 
