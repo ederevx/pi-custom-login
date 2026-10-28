@@ -1,8 +1,7 @@
 /** The one-screen editor for a provider's fallback, laid out like pi's own settings lists. */
 
-import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Container, Input, SelectList, type SelectListTheme, type SettingItem, SettingsList, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Input, SelectList, type SelectListTheme, type SettingItem, SettingsList, Spacer, Text, type Theme } from "@earendil-works/pi-tui";
 
 import { DEFAULT_FALLBACK_TIMEOUT_MS, type ModelRef, type ProviderFallbackConfig } from "./provider-config.ts";
 import { ProviderSettings } from "./provider-settings.ts";
@@ -67,7 +66,7 @@ export class SettingsScreen {
 					tui.requestRender();
 				}),
 				6,
-				getSettingsListTheme(),
+				SettingsScreen.listTheme(theme),
 				(id, value) => {
 					if (id === "fallback") {
 						draft.model = value === DISABLED ? null : SettingsScreen.resolve(value, candidates, unavailable);
@@ -185,6 +184,16 @@ export class SettingsScreen {
 				invalidate: () => host.invalidate(),
 				handleInput: (data: string) => input.handleInput(data),
 			};
+		};
+	}
+
+	private static listTheme(theme: Theme) {
+		return {
+			label: (text: string, selected: boolean) => (selected ? theme.fg("accent", text) : text),
+			value: (text: string, selected: boolean) => (selected ? theme.fg("accent", text) : theme.fg("muted", text)),
+			description: (text: string) => theme.fg("dim", text),
+			cursor: theme.fg("accent", "→ "),
+			hint: (text: string) => theme.fg("dim", text),
 		};
 	}
 
