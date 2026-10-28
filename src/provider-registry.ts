@@ -1,15 +1,37 @@
-/** Registers providers with pi and refreshes their model lists on demand. */
+/** Registers providers with pi and their response-start fallbacks. */
 
-import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ModelRegistry, ProviderConfig } from "@earendil-works/pi-coding-agent";
 
 import { DEFAULT_API, type ProviderEntry } from "./provider-config.ts";
 import { ModelCatalog } from "./model-catalog.ts";
+import { ProviderFallback, type FallbackRegistry } from "./provider-fallback.ts";
 
 export class ProviderRegistry {
-	private readonly pi: ExtensionAPI;
+	private readonly fallback = new ProviderFallback();
+	private registry: FallbackRegistry | undefined;
+	private store: { all(): Record<string, ProviderEntry> } | undefined;
 
-	constructor(pi: ExtensionAPI) {
-		this.pi = pi;
+	constructor(private readonly pi: ExtensionAPI) {}
+
+	attachStore(store: { all(): Record<string, ProviderEntry> }): void {
+		this.store = store;
+	}
+
+	bindSession(registry: ModelRegistry): void {
+		this.registry = registry;
+		this.fallback.bindRegistry(registry);
+	}
+
+	/** One catalog snapshot for the fallback picker. */
+	catalog() {
+		return this.registry?.getAll().map((model) => ({
+			provider: model.provider,
+			id: model.id,
+			api: model.api,
+			type: model.type,
+			contextWindow: model.contextWindow,
+			input: [...model.input],
+		}));
 	}
 
 	registerAll(providers: Record<string, ProviderEntry>): void {
@@ -23,7 +45,7 @@ export class ProviderRegistry {
 		this.pi.registerProvider(id, this.config(id, entry, catalog));
 	}
 
-	/** A re-registration merges over the old one, so a dropped key would survive. */
+	/** A re-registration merges over the old one, so a dropped field would survive. */
 	replace(id: string, entry: ProviderEntry): void {
 		this.pi.unregisterProvider(id);
 		this.register(id, entry);
@@ -41,6 +63,12 @@ export class ProviderRegistry {
 			authHeader: true,
 			models: [],
 			refreshModels: (context) => catalog.models(context),
+			...(entry.fallback
+				? {
+					streamSimple: (model, context, options) =>
+						this.fallback.stream(model, context, options, entry.fallback!),
+				}
+				: {}),
 		};
 	}
 }
