@@ -2,8 +2,9 @@ import { ModelCatalog } from "../src/model-catalog.ts";
 import type { CatalogRefreshContext, ProviderEntry } from "../src/provider-config.ts";
 import { assertEq, assertRejects, test } from "./harness.ts";
 
-const ENTRY: ProviderEntry = { name: "Verboo", baseUrl: "https://code.verboo.ai/router/v1", apiKey: "$VERBOO_TEST_KEY" };
+const ENTRY: ProviderEntry = { name: "Verboo", baseUrl: "https://code.verboo.ai/router/v1" };
 const SIGNAL = new AbortController().signal;
+const KEY = { type: "api_key", key: "k" };
 
 interface Capture {
 	requests: number;
@@ -21,7 +22,7 @@ function respondWith(body: unknown, status = 200): void {
 		capture.headers = init.headers as Record<string, string> | undefined;
 		return { ok: status < 400, status, json: async () => body };
 	}) as unknown as typeof fetch;
-	capture.requests = 0;
+	reset();
 }
 
 function context(overrides: Partial<CatalogRefreshContext> = {}): CatalogRefreshContext {
@@ -43,15 +44,18 @@ function reset(): void {
 	capture.persisted = undefined;
 }
 
+function networked(overrides: Partial<CatalogRefreshContext> = {}): CatalogRefreshContext {
+	return context({ credential: KEY, ...overrides });
+}
+
 test("a catalog maps the fields pi needs", async () => {
-	reset();
 	respondWith({
 		data: [
 			{ id: "glm-5.2", display_name: "GLM 5.2", context_window: 1000000, vision: true, reasoning: { effort_levels: ["high"] } },
 			{ id: "qwen3.8-27b", context_window: 262144 },
 		],
 	});
-	const models = await new ModelCatalog(ENTRY).models(context({ credential: { type: "api_key", key: "k" } }));
+	const models = await new ModelCatalog(ENTRY).models(networked());
 	assertEq(capture.url, "https://code.verboo.ai/router/v1/models");
 	assertEq(capture.headers?.Authorization, "Bearer k");
 	assertEq(JSON.stringify(models), JSON.stringify([
@@ -80,55 +84,45 @@ test("a catalog maps the fields pi needs", async () => {
 	assertEq(typeof capture.persisted?.checkedAt, "number");
 });
 
-test("a stored key is used before the environment", async () => {
-	reset();
-	process.env.VERBOO_TEST_KEY = "from-env";
-	respondWith({ data: [{ id: "model" }] });
-	await new ModelCatalog(ENTRY).models(context({ credential: { type: "api_key", key: "from-login" } }));
-	assertEq(capture.headers?.Authorization, "Bearer from-login");
-	delete process.env.VERBOO_TEST_KEY;
-});
-
-test("an environment reference supplies the key when nothing is stored", async () => {
-	reset();
-	process.env.VERBOO_TEST_KEY = "from-env";
-	respondWith({ data: [{ id: "model" }] });
-	await new ModelCatalog(ENTRY).models(context());
-	assertEq(capture.headers?.Authorization, "Bearer from-env");
-	delete process.env.VERBOO_TEST_KEY;
-});
-
-test("a literal key is accepted as written", async () => {
-	reset();
-	respondWith({ data: [{ id: "model" }] });
-	await new ModelCatalog({ baseUrl: "http://127.0.0.1:8080/v1", apiKey: "local" }).models(context());
-	assertEq(capture.headers?.Authorization, "Bearer local");
-});
-
 test("offline keeps the stored list without a request", async () => {
-	reset();
+	respondWith({ data: [] });
 	const stored = [{ id: "stored" }] as never;
 	const models = await new ModelCatalog(ENTRY).models(context({ stored: { models: stored }, allowNetwork: false }));
 	assertEq(models.length, 1);
 	assertEq(capture.requests, 0);
 });
 
-test("no key returns what was stored and asks no server", async () => {
-	reset();
+test("no credential returns the stored list and asks no server", async () => {
+	respondWith({ data: [] });
 	const models = await new ModelCatalog(ENTRY).models(context());
 	assertEq(models.length, 0);
 	assertEq(capture.requests, 0);
 });
 
 test("a failed catalog rejects and persists nothing", async () => {
-	reset();
 	respondWith({}, 401);
-	await assertRejects(() => new ModelCatalog(ENTRY).models(context({ credential: { type: "api_key", key: "k" } })), "HTTP 401");
+	await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "HTTP 401");
 	assertEq(capture.persisted, undefined);
 });
 
 test("a body without a model list rejects", async () => {
-	reset();
 	respondWith({ object: "list" });
-	await assertRejects(() => new ModelCatalog(ENTRY).models(context({ credential: { type: "api_key", key: "k" } })), "no model list");
+	await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "no model list");
 });
+
+const MALFORMED: Array<[string, unknown]> = [
+	["a non-object entry", [{}]],
+	["an empty id", [{ id: "   " }]],
+	["a non-string name", [{ id: "model", display_name: 7 }]],
+	["a non-positive context window", [{ id: "model", context_window: 0 }]],
+	["a non-boolean vision", [{ id: "model", vision: "yes" }]],
+	["malformed effort levels", [{ id: "model", reasoning: { effort_levels: "high" } }]],
+];
+
+for (const [description, data] of MALFORMED) {
+	test(`a catalog with ${description} rejects before persisting`, async () => {
+		respondWith({ data });
+		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "model catalog");
+		assertEq(capture.persisted, undefined);
+	});
+}

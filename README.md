@@ -39,12 +39,13 @@ pick a model from the catalog.
 Every registered provider is an `openai-completions` provider with
 `authHeader: true` and an empty initial model list. pi calls the provider's
 `refreshModels` hook at startup, when `/model` opens, and after `/login`; the
-hook requests `GET <baseUrl>/models` with the stored key (or the configured
-environment reference), maps each entry's `id`, `display_name`,
-`context_window`, `vision`, and `reasoning.effort_levels`, and persists the
-result for the next start. Offline or without a key the previously stored list
-is returned unchanged, and a failed or malformed response leaves it untouched
-rather than emptying it.
+hook requests `GET <baseUrl>/models` with the credential pi resolved, maps each
+entry's `id`, `display_name`, `context_window`, `vision`, and
+`reasoning.effort_levels`, and persists the result for the next start. Offline
+or without a credential the previously stored list is returned unchanged, and
+a failed, malformed, or unusable response leaves it untouched rather than
+emptying it. Re-adding an id replaces its registration, including a key it no
+longer carries.
 
 The catalog carries no price or output limit, so every model is registered with
 zero cost and a 16384-token output limit.

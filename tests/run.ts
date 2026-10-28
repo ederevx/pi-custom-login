@@ -1,12 +1,4 @@
-/**
- * pi-custom-login — test runner entry.
- *
- * Run from the repo root:
- *
- *   node --experimental-strip-types --experimental-transform-types tests/run.ts
- *
- * The OOP/format lint runs first, then the unit suite.
- */
+/** The OOP lint runs before the unit suite. */
 
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";

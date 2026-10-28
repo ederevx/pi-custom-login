@@ -82,6 +82,8 @@ export function assertThrows(fn: () => unknown, expected: string): void {
 	throw new Error("expected a throw");
 }
 
+const nativeFetch = globalThis.fetch;
+
 let scratchRoot: string | undefined;
 
 export function scratchDir(): string {
@@ -94,6 +96,7 @@ export function cleanupScratch(): void {
 		rmSync(scratchRoot, { recursive: true, force: true });
 		scratchRoot = undefined;
 	}
+	globalThis.fetch = nativeFetch;
 }
 
 /** A minimal stand-in for pi's ExtensionAPI. */

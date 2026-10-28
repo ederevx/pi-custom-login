@@ -1,10 +1,4 @@
-/**
- * pi-custom-login — extension entry point.
- *
- * Composition only: the stored providers are registered with pi and the
- * `/providers` command is attached. Model lists are not read here; pi calls
- * each provider's `refreshModels` when it loads a catalog.
- */
+/** Composition only: model lists come from each provider's refresh hook. */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
