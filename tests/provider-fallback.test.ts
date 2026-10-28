@@ -198,3 +198,90 @@ test("a registered provider carries no stream hook unless a fallback is configur
 	registry.registerAll({ managed: { baseUrl: "https://m.example/v1", fallback: { model: { provider: "other", id: "big" }, timeoutMs: 5000 } } });
 	assertEq(typeof pi.providers.get("managed")?.streamSimple, "function");
 });
+
+test("the default transport rejects a non-completions primary instead of crashing later", async () => {
+	const { ProviderFallback } = await import("../src/provider-fallback.ts");
+	const fallback = new ProviderFallback();
+	const outer = fallback.stream(model("verboo", "m1", { api: "anthropic-messages" }), CONTEXT, undefined, SETTINGS);
+	const error = await outer.result();
+	assertEq(error.stopReason, "error");
+	assertEq(error.errorMessage?.includes("Unsupported primary API"), true);
+});
+
+test("a configured fallback provider cannot chain to a third model", async () => {
+	const clock = new FakeClock();
+	const dispatches: string[] = [];
+	const transports: string[] = [];
+	const wrapper = new ProviderFallback(clock, ((target: never) => {
+		transports.push((target as unknown as { provider: string }).provider);
+		return createAssistantMessageEventStream();
+	}) as never);
+	let active = "";
+	wrapper.bindRegistry({
+		find: (provider, id) => model(provider, id),
+		streamSimple: (target, context, options) => {
+			dispatches.push(`${target.provider}/${target.id}`);
+			return wrapper.stream(target as never, context, options, { model: { provider: "third", id: "far" }, timeoutMs: 5000 });
+		},
+	} as never);
+	const settings = { model: { provider: "other", id: "big" }, timeoutMs: 5000 };
+	void active;
+	const outer = wrapper.stream(model("verboo", "m1"), CONTEXT, undefined, settings);
+	const outcome = outer.result();
+	await settle();
+	clock.advance(5000);
+	await settle();
+	await settle();
+	assertEq(dispatches, ["other/big"]);
+	clock.advance(5000);
+	await settle();
+	const error = await outcome;
+	assertEq(error.stopReason, "error");
+	assertEq(error.errorMessage?.includes("another fallback is not permitted"), true);
+	assertEq(dispatches.length, 1);
+});
+
+test("an early done before content commits without fallover", async () => {
+	const { clock, controlled, dispatched, stream } = harness();
+	const outer = stream.stream(model("verboo", "m1"), CONTEXT, undefined, SETTINGS);
+	const outcome = outer.result();
+	controlled[0].push(doneEvent({ provider: "verboo", id: "m1" }));
+	controlled[0].end();
+	await settle();
+	clock.advance(10000);
+	const message = await outcome;
+	assertEq(message.provider, "verboo");
+	assertEq(dispatched.length, 0);
+});
+
+test("a stream ending without a terminal event becomes a terminal error", async () => {
+	const { clock, controlled, stream } = harness();
+	const outer = stream.stream(model("verboo", "m1"), CONTEXT, undefined, SETTINGS);
+	const outcome = outer.result();
+	controlled[0].end();
+	await settle();
+	clock.advance(10000);
+	const error = await outcome;
+	assertEq(error.stopReason, "error");
+	assertEq(error.errorMessage?.includes("without a terminal event"), true);
+});
+
+test("concurrent requests keep independent deadlines", async () => {
+	const { clock, controlled, dispatched, stream } = harness();
+	const first = stream.stream(model("verboo", "a"), CONTEXT, undefined, SETTINGS).result();
+	const second = stream.stream(model("verboo", "b"), CONTEXT, undefined, SETTINGS).result();
+	controlled[0].push(textEvent({ provider: "verboo", id: "a" }));
+	await settle();
+	controlled[0].push(doneEvent({ provider: "verboo", id: "a" }));
+	controlled[0].end();
+	clock.advance(5000);
+	await settle();
+	await settle();
+	const firstMessage = await first;
+	assertEq(firstMessage.provider, "verboo");
+	assertEq(dispatched.length, 1);
+	controlled[2].push(doneEvent({ provider: "other", id: "big" }));
+	controlled[2].end();
+	const secondMessage = await second;
+	assertEq(secondMessage.provider, "other");
+});

@@ -56,7 +56,7 @@ export class ProviderSettings {
 			source.input.every((modality) => entry.input.includes(modality));
 	}
 
-	/** Refreshes the catalog, then offers Disabled plus every eligible model; undefined means cancel. */
+	/** Offers Disabled plus every eligible model; undefined means cancel, null means disabled. */
 	static async pick(
 		providerId: string,
 		stored: ProviderFallbackConfig | undefined,
@@ -73,6 +73,9 @@ export class ProviderSettings {
 		const options = new Map<string, ModelRef>();
 		const labels: string[] = ["Disabled"];
 		for (const entry of catalog) {
+			if (entry.provider === providerId || entry.api === "pi-virtual" || (entry.type !== undefined && entry.type !== "chat")) {
+				continue;
+			}
 			if (!sources.every((source) => ProviderSettings.usable(entry, source))) {
 				continue;
 			}
