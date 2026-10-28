@@ -120,6 +120,9 @@ export class ProviderFallback {
 					return;
 				}
 			}
+			if (request.phase === "fallback" || request.phase === "finished") {
+				return;
+			}
 			this.release(request);
 			this.finish(request, ProviderFallback.failed(model, new Error("Provider stream ended without a terminal event")));
 		} catch (error) {
@@ -188,7 +191,7 @@ export class ProviderFallback {
 		const fallbackOptions = {
 			...rest,
 			signal: options?.signal,
-			...(level === "off" ? {} : { reasoning: level }),
+			reasoning: level === "off" ? undefined : level,
 			maxTokens: Math.min(options?.maxTokens ?? target.maxTokens, target.maxTokens),
 		};
 		const inner = this.guard.run(true, () => this.registry!.streamSimple(target, context, fallbackOptions));
@@ -199,7 +202,7 @@ export class ProviderFallback {
 		let terminal = false;
 		try {
 			for await (const event of inner) {
-				if (request.phase === "finished" || request.phase !== "fallback") {
+				if (request.phase !== "fallback") {
 					return;
 				}
 				request.outer.push(event);
