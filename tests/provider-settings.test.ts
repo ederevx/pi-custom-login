@@ -196,16 +196,24 @@ test("arrow keys move inside the fallback list before confirming", async () => {
 	assertEq(JSON.stringify(await opened), '{"model":{"provider":"another","id":"wide"},"timeoutMs":30000}');
 });
 
-test("focus reaches the active input and returns to the list", async () => {
+test("focus reaches the active input and clearing it removes the cursor marker", async () => {
+	const { CURSOR_MARKER } = await import("@earendil-works/pi-tui");
 	const screen = screenContext();
 	const opened = SettingsScreen.open("verboo", undefined, [{ provider: "other", id: "fits" }], screen.ctx);
 	await tick();
 	screen.component().focused = true;
-	assertEq(screen.component().focused, true);
 	screen.component().handleInput("\r");
 	await tick();
+	assertEq(screen.component().render(80).join("\n").includes(CURSOR_MARKER), true);
+	let settled = false;
+	void opened.then(() => {
+		settled = true;
+	});
+	screen.component().handleInput("\u0013");
+	await tick();
+	assertEq(settled, false);
 	screen.component().focused = false;
-	assertEq(screen.component().focused, false);
+	assertEq(screen.component().render(80).join("\n").includes(CURSOR_MARKER), false);
 	screen.component().handleInput("\u001b");
 	await tick();
 	screen.component().handleInput("\u0013");
@@ -345,7 +353,18 @@ test("the command writes nothing when the screen is cancelled", async () => {
 			custom: (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value?: unknown) => void) => { handleInput(data: string): void }) =>
 				new Promise((resolve) => {
 					const theme = { fg: (_k: string, text: string) => text, bold: (text: string) => text };
-					const keys = { matches: (data: string) => data === "\u0013" };
+					const keys = {
+						matches: (data: string, id: string) => {
+							const map: Record<string, string[]> = {
+								"tui.select.up": ["\u001b[A"],
+								"tui.select.down": ["\u001b[B"],
+								"tui.select.confirm": ["\r"],
+								"tui.select.cancel": ["\u001b"],
+								"ctrl+s": ["\u0013"],
+							};
+							return (map[id] ?? []).includes(data);
+						},
+					};
 					component = factory({ requestRender: () => {} }, theme, keys, resolve);
 				}),
 		},
@@ -356,6 +375,11 @@ test("the command writes nothing when the screen is cancelled", async () => {
 	for (let attempt = 0; attempt < 5 && !component; attempt += 1) {
 		await tick();
 	}
+	component!.handleInput("\r");
+	await tick();
+	component!.handleInput("\u001b[B");
+	component!.handleInput("\r");
+	await tick();
 	component!.handleInput("\u001b");
 	await running;
 	assertEq(JSON.stringify(store.all()), before);
