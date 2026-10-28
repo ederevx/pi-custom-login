@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { COMMAND_NAME, type ProviderEntry } from "./provider-config.ts";
 import { ProviderRegistry } from "./provider-registry.ts";
 import { ProviderSettings } from "./provider-settings.ts";
+import { SettingsScreen } from "./settings-screen.ts";
 import { ProviderStore } from "./provider-store.ts";
 
 export class ProviderCommand {
@@ -84,6 +85,10 @@ export class ProviderCommand {
 
 	/** Picks a provider, refreshes the catalog, edits a detached draft, saves on commit. */
 	private async settings(id: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify(`/${COMMAND_NAME} settings requires TUI mode`, "warning");
+			return;
+		}
 		const providerId = id ?? await this.pickProvider(ctx);
 		if (!providerId) {
 			return;
@@ -94,7 +99,12 @@ export class ProviderCommand {
 			return;
 		}
 		await ctx.modelRegistry.refresh();
-		const picked = await ProviderSettings.pick(providerId, stored.fallback, this.registry.catalog(), ctx);
+		const catalog = this.registry.catalog();
+		if (!catalog) {
+			ctx.ui.notify("Model catalog unavailable; settings unchanged", "warning");
+			return;
+		}
+		const picked = await SettingsScreen.open(providerId, stored.fallback, ProviderSettings.candidates(providerId, catalog), ctx);
 		if (picked === undefined) {
 			ctx.ui.notify("Settings unchanged", "info");
 			return;

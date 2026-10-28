@@ -16,6 +16,7 @@ try {
 import "./provider-store.test.ts";
 import "./model-catalog.test.ts";
 import "./provider-command.test.ts";
+import "./provider-settings.test.ts";
 import "./provider-fallback.test.ts";
 
 await registry.runAll();
