@@ -1,6 +1,6 @@
 {
   "name": "pi-custom-login",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Register custom OpenAI-compatible providers in pi through /providers and let their /models catalog supply the model list.",
   "type": "module",
   "license": "MIT",

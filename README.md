@@ -36,13 +36,15 @@ Run `/login <id>` afterwards to store the key in pi's credential store, then
 
 ## Failing over when a response does not start
 
-`/providers settings <id>` opens one screen, laid out like `/models`: a
-fallback row that opens a searchable list of the models pi can offer, and a
-response-start timeout row. Enter edits the selected row, `Ctrl+S` saves, `Esc`
-cancels without writing. A request whose
-response has not begun producing content within that timeout aborts the
-attempt and is re-sent to the fallback model; the abort is best-effort, so the
-original server may still finish its own work.
+`/providers settings <id>` opens pi's usual settings screen: a fallback row
+that opens a searchable list of the models pi can offer, and a response-start
+timeout row. As in `/settings`, arrow keys move, Enter edits the selected row,
+and every change is saved as you make it; `Esc` closes the screen. The
+timeout belongs to the fallback, so it is stored with the chosen model, and
+editing it while the fallback is `Disabled` only keeps the value for the next
+choice. A request whose response has not begun producing content within that
+timeout aborts the attempt and is re-sent to the fallback model; the abort is
+best-effort, so the original server may still finish its own work.
 
 Only the start of a response counts. The first content event commits the
 request to the provider, and a transport error, an authentication failure, or a

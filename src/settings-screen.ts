@@ -1,13 +1,10 @@
-/** The one-screen editor for a provider's fallback, laid out like pi's own settings lists. */
+/** The inline editor for a provider's fallback, shaped like pi's own /settings screen. */
 
-import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, type ExtensionCommandContext, type Theme } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
-	fuzzyFilter,
 	Input,
-	Key,
 	type KeybindingsManager,
-	matchesKey,
 	SelectList,
 	type SelectItem,
 	type SelectListTheme,
@@ -16,6 +13,8 @@ import {
 	type SettingsListTheme,
 	Spacer,
 	Text,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
 import { DEFAULT_FALLBACK_TIMEOUT_MS, type ModelRef, type ProviderFallbackConfig } from "./provider-config.ts";
@@ -30,7 +29,7 @@ export interface SettingsDraft {
 const DISABLED = "Disabled";
 
 export class SettingsScreen {
-
+	/** Rows shown by the editor. */
 	static items(draft: SettingsDraft, unavailable: ModelRef | undefined): SettingItem[] {
 		return [
 			{
@@ -42,7 +41,9 @@ export class SettingsScreen {
 			{
 				id: "timeout",
 				label: "Response-start timeout",
-				description: "Milliseconds to wait for the first content of a response",
+				description: draft.model
+					? "Milliseconds to wait for the first content of a response"
+					: "Milliseconds to wait for the first content of a response; saved once a fallback is chosen",
 				currentValue: `${draft.timeoutMs} ms`,
 			},
 		];
@@ -56,56 +57,61 @@ export class SettingsScreen {
 		return stored.model;
 	}
 
-	/** Opens the editor; returns the saved configuration, null for Disabled, or undefined on cancel. */
+	/** Applies each edit as it is made, like pi's /settings; Escape closes. */
 	static async open(
 		providerId: string,
 		stored: ProviderFallbackConfig | undefined,
 		candidates: readonly ModelRef[],
 		ctx: ExtensionCommandContext,
-	): Promise<ProviderFallbackConfig | null | undefined> {
+		apply: (config: ProviderFallbackConfig | null) => void,
+	): Promise<void> {
 		const draft: SettingsDraft = {
 			model: stored?.model ?? null,
 			timeoutMs: stored?.timeoutMs ?? DEFAULT_FALLBACK_TIMEOUT_MS,
 		};
 		const unavailable = SettingsScreen.unavailable(stored, candidates);
 
-		return ctx.ui.custom<ProviderFallbackConfig | null | undefined>((tui, theme, keybindings, done) => {
-			let focused = false;
+		return ctx.ui.custom<void>((tui, theme, keybindings, done) => {
 			let activeInput: Input | undefined;
-			const setActiveInput = (input: Input | undefined): void => {
-				if (activeInput) {
-					activeInput.focused = false;
-				}
-				activeInput = input;
-				if (activeInput) {
-					activeInput.focused = focused;
-				}
-				tui.requestRender();
-			};
+			let focused = false;
 			const container = new Container();
+			const border = () => new DynamicBorder((text: string) => theme.fg("border", text));
 			const list = new SettingsList(
 				SettingsScreen.items(draft, unavailable).map((item) => ({
 					...item,
-					submenu: item.id === "fallback"
-						? SettingsScreen.pickFallback(draft, candidates, unavailable, theme, keybindings, setActiveInput)
-						: SettingsScreen.editTimeout(theme, setActiveInput),
+					submenu: (current: string, finish: (value?: string) => void) => {
+						const close = (value?: string) => {
+							activeInput = undefined;
+							finish(value);
+						};
+						const built = item.id === "fallback"
+							? SettingsScreen.pickFallback(draft, candidates, unavailable, theme, keybindings, close)
+							: SettingsScreen.editTimeout(current, theme, close);
+						activeInput = built.input;
+						activeInput.focused = focused;
+						tui.requestRender();
+						return built.component;
+					},
 				})),
-				6,
+				10,
 				SettingsScreen.listTheme(theme),
 				(id, value) => {
 					if (id === "fallback") {
-						draft.model = value === DISABLED ? null : SettingsScreen.resolve(value, candidates, unavailable);
-					} else {
-						draft.timeoutMs = Number(value.replace(" ms", ""));
+						draft.model = SettingsScreen.resolve(value, candidates, unavailable);
+						apply(SettingsScreen.revision(draft));
+						return;
+					}
+					draft.timeoutMs = Number(value.replace(" ms", ""));
+					if (draft.model) {
+						apply(SettingsScreen.revision(draft));
 					}
 				},
 				() => done(undefined),
 			);
 
-			container.addChild(new Text(theme.fg("accent", theme.bold(`Fallback for ${providerId}`)), 1, 0));
-			container.addChild(new Text(theme.fg("dim", "Enter: edit · Ctrl+S: save · Esc: cancel"), 1, 0));
-			container.addChild(new Spacer(1));
+			container.addChild(border());
 			container.addChild(list);
+			container.addChild(border());
 
 			return {
 				render: (width: number) => container.render(width),
@@ -120,15 +126,12 @@ export class SettingsScreen {
 					}
 				},
 				handleInput: (data: string) => {
-					if (!activeInput && matchesKey(data, Key.ctrl("s"))) {
-						done(SettingsScreen.revision(draft));
-						return;
-					}
 					list.handleInput(data);
 					tui.requestRender();
 				},
+				handleMouse: (event: TuiMouseEvent): TuiMouseEventResult | undefined => list.handleMouse(event),
 			};
-		}, { overlay: true });
+		});
 	}
 
 	private static pickFallback(
@@ -137,59 +140,90 @@ export class SettingsScreen {
 		unavailable: ModelRef | undefined,
 		theme: Theme,
 		keybindings: KeybindingsManager,
-		setActiveInput: (input: Input | undefined) => void,
-	) {
-		return (_current: string, done: (value?: string) => void) => {
-			const all: SelectItem[] = [{ value: DISABLED, label: DISABLED }];
-			for (const candidate of candidates) {
-				all.push({ value: ProviderSettings.label(candidate), label: ProviderSettings.label(candidate) });
-			}
-			if (unavailable) {
-				all.push({ value: ProviderSettings.label(unavailable), label: SettingsScreen.describe(unavailable, unavailable) });
-			}
-			const initial = all.findIndex((item) => item.value === (draft.model ? ProviderSettings.label(draft.model) : DISABLED));
-			const host = new Container();
-			const search = new Input({ placeholder: "Search models" });
-			setActiveInput(search);
-			const state = { list: SettingsScreen.selectList(all, SettingsScreen.listTheme(theme), Math.max(0, initial), done, setActiveInput) };
-			host.addChild(search);
-			host.addChild(new Spacer(1));
-			host.addChild({
-				render: (width: number) => state.list.render(width),
-				invalidate: () => state.list.invalidate(),
-				handleInput: () => {},
-			});
-			return {
-				render: (width: number) => host.render(width),
-				invalidate: () => host.invalidate(),
+		done: (value?: string) => void,
+	): { component: Container; input: Input } {
+		const all: SelectItem[] = [{ value: DISABLED, label: DISABLED }];
+		for (const candidate of candidates) {
+			all.push({ value: ProviderSettings.label(candidate), label: ProviderSettings.label(candidate) });
+		}
+		if (unavailable) {
+			all.push({ value: ProviderSettings.label(unavailable), label: SettingsScreen.describe(unavailable, unavailable) });
+		}
+
+		const search = new Input();
+		const listHost = new Container();
+		let list = SettingsScreen.selectList(all, SettingsScreen.listTheme(theme), SettingsScreen.indexOf(all, draft));
+		listHost.addChild(list);
+
+		const rebuild = (query: string) => {
+			const visible = SettingsScreen.filter(all, query);
+			const index = query.trim() === "" ? SettingsScreen.indexOf(all, draft) : 0;
+			list = SettingsScreen.selectList(visible, SettingsScreen.listTheme(theme), index);
+			listHost.clear();
+			listHost.addChild(list);
+		};
+
+		const host = new Container();
+		host.addChild(search);
+		host.addChild(new Spacer(1));
+		host.addChild(listHost);
+		return {
+			input: search,
+			component: Object.assign(host, {
 				handleInput: (data: string) => {
-					if (
-						keybindings.matches(data, "tui.select.up") ||
-						keybindings.matches(data, "tui.select.down") ||
-						keybindings.matches(data, "tui.select.confirm") ||
-						keybindings.matches(data, "tui.select.cancel")
-					) {
-						state.list.handleInput(data);
+					if (keybindings.matches(data, "tui.select.cancel")) {
+						done();
+						return;
+					}
+					if (keybindings.matches(data, "tui.select.up") || keybindings.matches(data, "tui.select.down")) {
+						list.handleInput(data);
+						return;
+					}
+					// Both pi-tui's Input and pi's own screens also submit on a bare newline.
+					if (keybindings.matches(data, "tui.select.confirm") || data === "\n") {
+						const chosen = list.getSelectedItem();
+						if (chosen) {
+							done(chosen.label);
+						}
 						return;
 					}
 					const before = search.getValue();
 					search.handleInput(data);
 					if (search.getValue() !== before) {
-						const visible = fuzzyFilter(all, search.getValue(), (item) => item.label);
-						state.list = SettingsScreen.selectList(visible, SettingsScreen.listTheme(theme), 0, done, setActiveInput);
+						rebuild(search.getValue());
 					}
 				},
-			};
+			}),
 		};
 	}
 
-	private static selectList(
-		items: readonly SelectItem[],
-		theme: SettingsListTheme,
-		index: number,
-		done: (value?: string) => void,
-		setActiveInput: (input: Input | undefined) => void,
-	): SelectList {
+	private static editTimeout(current: string, theme: Theme, done: (value?: string) => void): { component: Container; input: Input } {
+		const error = new Text("", 0, 0);
+		const input = new Input();
+		input.setValue(current.replace(" ms", ""));
+		input.onSubmit = (value: string) => {
+			const parsed = ProviderSettings.parseTimeout(value);
+			if (parsed === undefined) {
+				error.setText(theme.fg("error", "Enter a whole number of milliseconds"));
+				return;
+			}
+			done(`${parsed} ms`);
+		};
+		input.onEscape = () => done();
+		const host = new Container();
+		host.addChild(new Text(theme.fg("muted", "Response-start timeout in milliseconds"), 0, 0));
+		host.addChild(new Spacer(1));
+		host.addChild(input);
+		host.addChild(error);
+		return {
+			input,
+			component: Object.assign(host, {
+				handleInput: (data: string) => input.handleInput(data),
+			}),
+		};
+	}
+
+	private static selectList(items: readonly SelectItem[], theme: SettingsListTheme, index: number): SelectList {
 		const selectTheme: SelectListTheme = {
 			selectedPrefix: (text) => theme.label(text, true),
 			selectedText: (text) => theme.label(text, true),
@@ -199,50 +233,17 @@ export class SettingsScreen {
 		};
 		const list = new SelectList([...items], 10, selectTheme);
 		list.setSelectedIndex(index);
-		list.onSelect = (item) => {
-			setActiveInput(undefined);
-			done(item.label);
-		};
-		list.onCancel = () => {
-			setActiveInput(undefined);
-			done();
-		};
 		return list;
 	}
 
-	/** A prefilled timeout field that keeps itself open until the value is a whole number of milliseconds. */
-	private static editTimeout(
-		theme: Theme,
-		setActiveInput: (input: Input | undefined) => void,
-	) {
-		return (current: string, done: (value?: string) => void) => {
-			const input = new Input({ placeholder: "Milliseconds" });
-			input.setValue(current.replace(" ms", ""));
-			const error = new Text("", 1, 0);
-			const host = new Container();
-			setActiveInput(input);
-			input.onSubmit = (value: string) => {
-				const parsed = ProviderSettings.parseTimeout(value);
-				if (parsed === undefined) {
-					error.setText(theme.fg("error", "Enter a whole number of milliseconds"));
-					return;
-				}
-				setActiveInput(undefined);
-				done(`${parsed} ms`);
-			};
-			input.onEscape = () => {
-				setActiveInput(undefined);
-				done();
-			};
-			host.addChild(new Text("Response-start timeout in milliseconds", 1, 0));
-			host.addChild(input);
-			host.addChild(error);
-			return {
-				render: (width: number) => host.render(width),
-				invalidate: () => host.invalidate(),
-				handleInput: (data: string) => input.handleInput(data),
-			};
-		};
+	private static indexOf(items: readonly SelectItem[], draft: SettingsDraft): number {
+		const wanted = draft.model ? ProviderSettings.label(draft.model) : DISABLED;
+		return Math.max(0, items.findIndex((item) => item.value === wanted));
+	}
+
+	private static filter(items: readonly SelectItem[], query: string): SelectItem[] {
+		const needle = query.trim().toLowerCase();
+		return needle === "" ? [...items] : items.filter((item) => item.label.toLowerCase().includes(needle));
 	}
 
 	private static listTheme(theme: Theme): SettingsListTheme {
@@ -255,6 +256,7 @@ export class SettingsScreen {
 		};
 	}
 
+	/** Nothing is stored while the fallback is disabled; the timeout waits for a model. */
 	private static revision(draft: SettingsDraft): ProviderFallbackConfig | null {
 		return draft.model ? { model: draft.model, timeoutMs: draft.timeoutMs } : null;
 	}
