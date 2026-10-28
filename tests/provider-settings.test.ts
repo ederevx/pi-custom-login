@@ -91,7 +91,7 @@ test("an offered model is not reported as unavailable", () => {
 
 /** A TUI context whose custom() builds the component; the result resolves when the screen calls done. */
 function screenContext() {
-	let component: { render(width: number): string[]; handleInput(data: string): void } | undefined;
+	let component: { render(width: number): string[]; handleInput(data: string): void; focused: boolean } | undefined;
 	const keybindings = {
 		matches: (data: string, id: string): boolean => {
 			const map: Record<string, string[]> = {
@@ -100,6 +100,9 @@ function screenContext() {
 				"tui.select.confirm": ["\r"],
 				"tui.select.cancel": ["\u001b"],
 			};
+			if (id === "ctrl+s") {
+				return data === "\u0013" || data === "\u001b[115;5u";
+			}
 			return (map[id] ?? []).includes(data);
 		},
 	};
@@ -108,7 +111,7 @@ function screenContext() {
 	const ctx = {
 		mode: "tui",
 		ui: {
-			custom: (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value?: unknown) => void) => { render(width: number): string[]; handleInput(data: string): void }) => {
+			custom: (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value?: unknown) => void) => { render(width: number): string[]; handleInput(data: string): void; focused: boolean }) => {
 				const opened = new Promise<unknown>((resolve) => {
 					settle = resolve;
 				});
@@ -150,7 +153,7 @@ test("a disabled provider saves as null so the caller deletes the setting", asyn
 	assertEq(await opened, null);
 });
 
-test("the fallback submenu searches inside provider/model and selects with Enter", async () => {
+test("the fallback submenu renders, searches inside provider/model, and selects with Enter", async () => {
 	const screen = screenContext();
 	const candidates = [
 		{ provider: "other", id: "fits" },
@@ -160,14 +163,61 @@ test("the fallback submenu searches inside provider/model and selects with Enter
 	await tick();
 	screen.component().handleInput("\r");
 	await tick();
+	const menu = screen.component().render(80).join("\n");
+	assertEq(menu.includes("Disabled"), true);
+	assertEq(menu.includes("other/fits"), true);
+	assertEq(menu.includes("another/wide"), true);
 	screen.component().handleInput("w");
 	screen.component().handleInput("i");
 	screen.component().handleInput("d");
 	await tick();
+	assertEq(screen.component().render(80).join("\n").includes("another/wide"), true);
 	screen.component().handleInput("\r");
 	await tick();
 	screen.component().handleInput("\u0013");
 	assertEq(JSON.stringify(await opened), '{"model":{"provider":"another","id":"wide"},"timeoutMs":30000}');
+});
+
+test("arrow keys move inside the fallback list before confirming", async () => {
+	const screen = screenContext();
+	const candidates = [
+		{ provider: "other", id: "fits" },
+		{ provider: "another", id: "wide" },
+	];
+	const opened = SettingsScreen.open("verboo", undefined, candidates, screen.ctx);
+	await tick();
+	screen.component().handleInput("\r");
+	await tick();
+	screen.component().handleInput("\u001b[B");
+	screen.component().handleInput("\u001b[B");
+	screen.component().handleInput("\r");
+	await tick();
+	screen.component().handleInput("\u0013");
+	assertEq(JSON.stringify(await opened), '{"model":{"provider":"another","id":"wide"},"timeoutMs":30000}');
+});
+
+test("focus reaches the active input and returns to the list", async () => {
+	const screen = screenContext();
+	const opened = SettingsScreen.open("verboo", undefined, [{ provider: "other", id: "fits" }], screen.ctx);
+	await tick();
+	screen.component().focused = true;
+	assertEq(screen.component().focused, true);
+	screen.component().handleInput("\r");
+	await tick();
+	screen.component().focused = false;
+	assertEq(screen.component().focused, false);
+	screen.component().handleInput("\u001b");
+	await tick();
+	screen.component().handleInput("\u0013");
+	await opened;
+});
+
+test("Kitty-encoded Ctrl+S saves as well as the legacy byte", async () => {
+	const screen = screenContext();
+	const opened = SettingsScreen.open("verboo", undefined, [], screen.ctx);
+	await tick();
+	screen.component().handleInput("\u001b[115;5u");
+	assertEq(await opened, null);
 });
 
 test("escape inside the fallback submenu returns without changing the draft", async () => {
@@ -183,20 +233,26 @@ test("escape inside the fallback submenu returns without changing the draft", as
 	assertEq(JSON.stringify(await opened), '{"model":{"provider":"other","id":"fits"},"timeoutMs":7000}');
 });
 
-test("a saved model that left the catalog opens without becoming Disabled", async () => {
+test("a saved model that left the catalog opens selected and survives re-selection", async () => {
 	const screen = screenContext();
 	const stored: ProviderFallbackConfig = { model: { provider: "gone", id: "m" }, timeoutMs: 4000 };
 	const opened = SettingsScreen.open("verboo", stored, [{ provider: "other", id: "fits" }], screen.ctx);
 	await tick();
-	const rendered = screen.component().render(80).join("\n");
-	assertEq(rendered.includes("gone/m (saved; unavailable)"), true);
+	assertEq(screen.component().render(80).join("\n").includes("gone/m (saved; unavailable)"), true);
+	screen.component().handleInput("\r");
+	await tick();
+	assertEq(screen.component().render(80).join("\n").includes("gone/m (saved; unavailable)"), true);
+	screen.component().handleInput("\r");
+	await tick();
+	assertEq(screen.component().render(80).join("\n").includes("gone/m (saved; unavailable)"), true);
 	screen.component().handleInput("\u0013");
 	assertEq(JSON.stringify(await opened), '{"model":{"provider":"gone","id":"m"},"timeoutMs":4000}');
 });
 
-test("an invalid timeout keeps the editor open and leaves the value alone", async () => {
+test("an invalid timeout shows an error and leaves the stored value alone", async () => {
 	const screen = screenContext();
-	const opened = SettingsScreen.open("verboo", undefined, [], screen.ctx);
+	const stored: ProviderFallbackConfig = { model: { provider: "other", id: "fits" }, timeoutMs: 20000 };
+	const opened = SettingsScreen.open("verboo", stored, [{ provider: "other", id: "fits" }], screen.ctx);
 	await tick();
 	screen.component().handleInput("\u001b[B");
 	screen.component().handleInput("\r");
@@ -204,6 +260,7 @@ test("an invalid timeout keeps the editor open and leaves the value alone", asyn
 	screen.component().handleInput("x");
 	screen.component().handleInput("\r");
 	await tick();
+	assertEq(screen.component().render(80).join("\n").includes("whole number"), true);
 	let settled = false;
 	void opened.then(() => {
 		settled = true;
@@ -213,7 +270,7 @@ test("an invalid timeout keeps the editor open and leaves the value alone", asyn
 	screen.component().handleInput("\u001b");
 	await tick();
 	screen.component().handleInput("\u0013");
-	assertEq(await opened, null);
+	assertEq(JSON.stringify(await opened), '{"model":{"provider":"other","id":"fits"},"timeoutMs":20000}');
 });
 
 test("a valid timeout replaces the stored value", async () => {
@@ -241,3 +298,66 @@ test("a valid timeout replaces the stored value", async () => {
 function tick(): Promise<void> {
 	return new Promise((resolve) => setImmediate(resolve));
 }
+
+function model(provider: string, id: string) {
+	return {
+		id,
+		name: id,
+		api: "openai-completions",
+		provider,
+		baseUrl: "https://example.test/v1",
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128000,
+		maxTokens: 16384,
+		reasoning: false,
+	};
+}
+
+test("the command writes nothing when the screen is cancelled", async () => {
+	const { FakePi, scratchDir } = await import("./harness.ts");
+	const { ProviderCommand } = await import("../src/provider-command.ts");
+	const { ProviderRegistry } = await import("../src/provider-registry.ts");
+	const { ProviderStore } = await import("../src/provider-store.ts");
+
+	const pi = new FakePi();
+	const store = new ProviderStore(`${scratchDir()}/settings-cancel`);
+	store.add("verboo", { baseUrl: "https://code.verboo.example/v1", fallback: { model: { provider: "other", id: "fits" }, timeoutMs: 5000 } });
+	const registry = new ProviderRegistry(pi.extension());
+	new ProviderCommand(pi.extension(), store, registry).register();
+
+	const models = [model("verboo", "m"), model("other", "fits")];
+	const registryStub = {
+		getAll: () => models,
+		find: (provider: string, id: string) => models.find((entry) => entry.provider === provider && entry.id === id),
+		streamSimple: () => {
+			throw new Error("unused");
+		},
+	};
+	let component: { handleInput(data: string): void } | undefined;
+	const ctx = {
+		mode: "tui",
+		modelRegistry: { refresh: async () => {}, ...registryStub },
+		ui: {
+			notify: () => {},
+			select: async () => undefined,
+			input: async () => undefined,
+			custom: (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value?: unknown) => void) => { handleInput(data: string): void }) =>
+				new Promise((resolve) => {
+					const theme = { fg: (_k: string, text: string) => text, bold: (text: string) => text };
+					const keys = { matches: (data: string) => data === "\u0013" };
+					component = factory({ requestRender: () => {} }, theme, keys, resolve);
+				}),
+		},
+	};
+	registry.bindSession(registryStub as never);
+	const before = JSON.stringify(store.all());
+	const running = pi.command("providers", "settings verboo", ctx as never);
+	for (let attempt = 0; attempt < 5 && !component; attempt += 1) {
+		await tick();
+	}
+	component!.handleInput("\u001b");
+	await running;
+	assertEq(JSON.stringify(store.all()), before);
+	assertEq(pi.unregistered.length, 0);
+});
