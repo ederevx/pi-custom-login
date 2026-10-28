@@ -1,6 +1,5 @@
 /** Validates fallback settings loaded from disk and edits them through prompts. */
 
-import { isModelType } from "@earendil-works/pi-ai";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import {

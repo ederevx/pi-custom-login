@@ -285,3 +285,40 @@ test("concurrent requests keep independent deadlines", async () => {
 	const secondMessage = await second;
 	assertEq(secondMessage.provider, "other");
 });
+
+test("a primary that terminates after the timeout does not end the fallback", async () => {
+	const { clock, controlled, stream } = harness();
+	const outer = stream.stream(model("verboo", "m1"), CONTEXT, undefined, SETTINGS);
+	const outcome = outer.result();
+	await settle();
+	clock.advance(5000);
+	await settle();
+	await settle();
+	controlled[0].push({
+		type: "error",
+		reason: "aborted",
+		error: { role: "assistant", provider: "verboo", api: "openai-completions", model: "m1", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "aborted", errorMessage: "aborted", content: [], timestamp: Date.now() },
+	} as never);
+	controlled[0].end();
+	await settle();
+	controlled[1].push(doneEvent({ provider: "other", id: "big" }));
+	controlled[1].end();
+	const message = await outcome;
+	assertEq(message.provider, "other");
+	assertEq(message.stopReason, "stop");
+});
+
+test("requested reasoning is cleared when the target does not support it", async () => {
+	const { clock, dispatched, controlled, stream } = harness();
+	const outer = stream.stream(model("verboo", "m1"), CONTEXT, { reasoning: "high" as never }, SETTINGS);
+	const outcome = outer.result();
+	await settle();
+	clock.advance(5000);
+	await settle();
+	await settle();
+	assertEq(dispatched.length, 1);
+	assertEq(dispatched[0].options?.reasoning, undefined);
+	controlled[1].push(doneEvent({ provider: "other", id: "big" }));
+	controlled[1].end();
+	await outcome;
+});
