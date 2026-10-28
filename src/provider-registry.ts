@@ -23,6 +23,12 @@ export class ProviderRegistry {
 		this.pi.registerProvider(id, this.config(id, entry, catalog));
 	}
 
+	/** A re-registration merges over the old one, so a dropped key would survive. */
+	replace(id: string, entry: ProviderEntry): void {
+		this.pi.unregisterProvider(id);
+		this.register(id, entry);
+	}
+
 	remove(id: string): void {
 		this.pi.unregisterProvider(id);
 	}

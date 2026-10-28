@@ -13,7 +13,6 @@ export class ProviderStore {
 		this.path = join(agentDir, CONFIG_FILE);
 	}
 
-	/** `$PI_CODING_AGENT_DIR`, else the default `<home>/.pi/agent`. */
 	static agentDir(): string {
 		return process.env[AGENT_DIR_VARIABLE] ?? join(homedir(), ".pi", "agent");
 	}

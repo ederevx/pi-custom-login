@@ -7,6 +7,8 @@ import { ProviderRegistry } from "./provider-registry.ts";
 import { ProviderStore } from "./provider-store.ts";
 
 export class ProviderCommand {
+	private static readonly ARGUMENTS = /^(\S+)(?:\s+(\S+))?(?:\s+(\S+))?(?:\s+([\s\S]+))?$/;
+
 	private readonly pi: ExtensionAPI;
 	private readonly store: ProviderStore;
 	private readonly registry: ProviderRegistry;
@@ -25,7 +27,7 @@ export class ProviderCommand {
 	}
 
 	private async run(args: string, ctx: ExtensionCommandContext): Promise<void> {
-		const [action, id, baseUrl, apiKey] = args.trim().split(/\s+/).filter(Boolean);
+		const [, action, id, baseUrl, apiKey] = args.trim().match(ProviderCommand.ARGUMENTS) ?? [];
 		if (action === "add") {
 			await this.add(id, baseUrl, apiKey, ctx);
 			return;
@@ -50,7 +52,7 @@ export class ProviderCommand {
 		}
 		const entry: ProviderEntry = { baseUrl: url, ...(apiKey === undefined ? {} : { apiKey }) };
 		this.store.add(providerId, entry);
-		this.registry.register(providerId, entry);
+		this.registry.replace(providerId, entry);
 		ctx.ui.notify(`Added ${providerId}; its models come from ${url}/models`, "info");
 	}
 

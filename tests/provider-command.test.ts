@@ -39,11 +39,28 @@ test("add refuses a registration without a URL", async () => {
 	assertEq(ctx.notifications.at(-1)?.type, "warning");
 });
 
+test("re-adding an id drops the key it no longer has", async () => {
+	const { pi, store } = subject("command-replace");
+	await pi.command("providers", "add verboo https://code.verboo.ai/router/v1 $VERBOO_API_KEY", new FakeCommandContext());
+	await pi.command("providers", "add verboo https://code.verboo.ai/router/v1", new FakeCommandContext());
+	assertEq(pi.unregistered.at(-1), "verboo");
+	assertEq(pi.providers.get("verboo")?.apiKey, undefined);
+	assertEq(store.all().verboo.apiKey, undefined);
+});
+
+test("a key command keeps its spaces", async () => {
+	const { pi, store } = subject("command-key-command");
+	await pi.command("providers", "add proxy https://proxy.example/v1 !secret-tool --flag x", new FakeCommandContext());
+	assertEq(store.all().proxy.apiKey, "!secret-tool --flag x");
+	assertEq(pi.providers.get("proxy")?.apiKey, "!secret-tool --flag x");
+});
+
 test("remove unregisters and forgets the provider", async () => {
 	const { pi, store } = subject("command-remove");
 	await pi.command("providers", "add first https://first.example/v1", new FakeCommandContext());
 	await pi.command("providers", "remove first", new FakeCommandContext());
-	assertEq(pi.unregistered.join(","), "first");
+	assertEq(pi.unregistered.at(-1), "first");
+	assertEq(pi.providers.has("first"), false);
 	assertEq(Object.keys(store.all()).length, 0);
 });
 
