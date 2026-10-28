@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { assertEq, assertThrows, scratchDir, test } from "./harness.ts";
@@ -35,6 +35,13 @@ test("remove drops only the named provider", () => {
 	providers.add("second", { baseUrl: "https://second.example/v1" });
 	providers.remove("first");
 	assertEq(Object.keys(providers.all()).join(","), "second");
+});
+
+test("a new file is readable only by its owner", () => {
+	const providers = store("store-mode");
+	providers.add("verboo", { baseUrl: "https://code.verboo.ai/router/v1" });
+	const mode = statSync(join(scratchDir(), "store-mode", "custom-providers.json")).mode & 0o777;
+	assertEq(mode.toString(8), "600");
 });
 
 test("a malformed file fails instead of hiding the damage", () => {
