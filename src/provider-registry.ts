@@ -38,7 +38,6 @@ export class ProviderRegistry {
 			name: entry.name ?? id,
 			baseUrl: entry.baseUrl,
 			api: DEFAULT_API,
-			...(entry.apiKey === undefined ? {} : { apiKey: entry.apiKey }),
 			authHeader: true,
 			models: [],
 			refreshModels: (context) => catalog.models(context),

@@ -13,7 +13,6 @@ export const DEFAULT_MAX_TOKENS = 16384;
 export interface ProviderEntry {
 	name?: string;
 	baseUrl: string;
-	apiKey?: string;
 }
 
 /** The part of pi's refresh context this extension uses. */

@@ -14,10 +14,10 @@ test("an absent file means no providers", () => {
 
 test("add writes the provider under its id", () => {
 	const providers = store("store-add");
-	providers.add("verboo", { baseUrl: "https://code.verboo.ai/router/v1", apiKey: "$VERBOO_API_KEY" });
+	providers.add("verboo", { baseUrl: "https://code.verboo.ai/router/v1" });
 	const written = JSON.parse(readFileSync(join(scratchDir(), "store-add", "custom-providers.json"), "utf8"));
 	assertEq(written.providers.verboo.baseUrl, "https://code.verboo.ai/router/v1");
-	assertEq(written.providers.verboo.apiKey, "$VERBOO_API_KEY");
+	assertEq(JSON.stringify(written.providers.verboo), '{"baseUrl":"https://code.verboo.ai/router/v1"}');
 });
 
 test("add keeps the providers already stored", () => {

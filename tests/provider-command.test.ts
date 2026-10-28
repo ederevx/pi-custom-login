@@ -13,14 +13,13 @@ function subject(name: string): { pi: FakePi; store: ProviderStore } {
 test("add registers the provider immediately and records it", async () => {
 	const { pi, store } = subject("command-add");
 	const ctx = new FakeCommandContext();
-	await pi.command("providers", "add verboo https://code.verboo.ai/router/v1 $VERBOO_API_KEY", ctx);
+	await pi.command("providers", "add verboo https://code.verboo.ai/router/v1", ctx);
 	assertEq(pi.providers.get("verboo")?.baseUrl, "https://code.verboo.ai/router/v1");
-	assertEq(pi.providers.get("verboo")?.apiKey, "$VERBOO_API_KEY");
 	assertEq(pi.providers.get("verboo")?.api, "openai-completions");
 	assertEq(pi.providers.get("verboo")?.authHeader, true);
 	assertEq(JSON.stringify(pi.providers.get("verboo")?.models), "[]");
 	assertEq(store.all().verboo.baseUrl, "https://code.verboo.ai/router/v1");
-	assertEq(ctx.lastMessage, "Added verboo; its models come from https://code.verboo.ai/router/v1/models");
+	assertEq(ctx.lastMessage, "Added verboo; run /login verboo for its key, then /model");
 });
 
 test("add asks for what the arguments left out", async () => {
@@ -39,20 +38,22 @@ test("add refuses a registration without a URL", async () => {
 	assertEq(ctx.notifications.at(-1)?.type, "warning");
 });
 
-test("re-adding an id drops the key it no longer has", async () => {
-	const { pi, store } = subject("command-replace");
-	await pi.command("providers", "add verboo https://code.verboo.ai/router/v1 $VERBOO_API_KEY", new FakeCommandContext());
-	await pi.command("providers", "add verboo https://code.verboo.ai/router/v1", new FakeCommandContext());
-	assertEq(pi.unregistered.at(-1), "verboo");
-	assertEq(pi.providers.get("verboo")?.apiKey, undefined);
-	assertEq(store.all().verboo.apiKey, undefined);
+test("add refuses a key argument and records nothing", async () => {
+	const { pi, store } = subject("command-key-argument");
+	const ctx = new FakeCommandContext();
+	await pi.command("providers", "add proxy https://proxy.example/v1 sk-live-abc", ctx);
+	assertEq(pi.providers.size, 0);
+	assertEq(Object.keys(store.all()).length, 0);
+	assertEq(ctx.notifications.at(-1)?.type, "warning");
+	assertEq(ctx.lastMessage, "Keys are stored by /login <id>, not by /providers add");
 });
 
-test("a key command keeps its spaces", async () => {
-	const { pi, store } = subject("command-key-command");
-	await pi.command("providers", "add proxy https://proxy.example/v1 !secret-tool --flag x", new FakeCommandContext());
-	assertEq(store.all().proxy.apiKey, "!secret-tool --flag x");
-	assertEq(pi.providers.get("proxy")?.apiKey, "!secret-tool --flag x");
+test("re-adding an id replaces its registration", async () => {
+	const { pi } = subject("command-replace");
+	await pi.command("providers", "add verboo https://old.example/v1", new FakeCommandContext());
+	await pi.command("providers", "add verboo https://code.verboo.ai/router/v1", new FakeCommandContext());
+	assertEq(pi.unregistered.at(-1), "verboo");
+	assertEq(pi.providers.get("verboo")?.baseUrl, "https://code.verboo.ai/router/v1");
 });
 
 test("remove unregisters and forgets the provider", async () => {
