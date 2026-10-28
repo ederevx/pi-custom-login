@@ -2,6 +2,7 @@ import { assertEq, test } from "./harness.ts";
 import { MAX_TIMEOUT_MS, type ProviderFallbackConfig } from "../src/provider-config.ts";
 import { ProviderSettings, type CatalogEntry } from "../src/provider-settings.ts";
 import { SettingsScreen, type SettingsDraft } from "../src/settings-screen.ts";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 function entry(provider: string, id: string, overrides: Partial<CatalogEntry> = {}): CatalogEntry {
 	return {
@@ -86,4 +87,49 @@ test("a saved model the catalog no longer offers stays visible", () => {
 test("an offered model is not reported as unavailable", () => {
 	const stored: ProviderFallbackConfig = { model: { provider: "other", id: "fits" }, timeoutMs: 5000 };
 	assertEq(SettingsScreen.unavailable(stored, [{ provider: "other", id: "fits" }]), undefined);
+});
+
+/** A TUI context whose custom() builds the component and captures its result. */
+function screenContext() {
+	const captured: { component?: { render(width: number): string[]; handleInput(data: string): void }; resolved: unknown } = { resolved: "unset" };
+	const theme = { fg: (_key: string, text: string) => text, bold: (text: string) => text };
+	const ctx = {
+		mode: "tui",
+		ui: {
+			custom: async (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value?: unknown) => void) => { render(width: number): string[]; handleInput(data: string): void }) => {
+				captured.component = factory({ requestRender: () => {} }, theme, {}, (value?: unknown) => {
+					captured.resolved = value;
+				});
+				return undefined;
+			},
+			notify: () => {},
+		},
+	} as unknown as ExtensionCommandContext;
+	return { captured, ctx };
+}
+
+test("saving the screen returns the edited configuration", async () => {
+	const { captured, ctx } = screenContext();
+	const stored: ProviderFallbackConfig = { model: { provider: "other", id: "fits" }, timeoutMs: 5000 };
+	assertEq(await SettingsScreen.open("verboo", stored, [{ provider: "other", id: "fits" }], ctx), undefined);
+	const rendered = captured.component!.render(80).join("\n");
+	assertEq(rendered.includes("Fallback for verboo"), true);
+	assertEq(rendered.includes("other/fits"), true);
+	assertEq(rendered.includes("5000 ms"), true);
+	captured.component!.handleInput("\u0013");
+	assertEq(JSON.stringify(captured.resolved), '{"model":{"provider":"other","id":"fits"},"timeoutMs":5000}');
+});
+
+test("cancelling the screen writes nothing", async () => {
+	const { captured, ctx } = screenContext();
+	await SettingsScreen.open("verboo", undefined, [], ctx);
+	captured.component!.handleInput("\u001b");
+	assertEq(captured.resolved, undefined);
+});
+
+test("a disabled provider saves as null so the caller deletes the setting", async () => {
+	const { captured, ctx } = screenContext();
+	await SettingsScreen.open("verboo", undefined, [{ provider: "other", id: "fits" }], ctx);
+	captured.component!.handleInput("\u0013");
+	assertEq(captured.resolved, null);
 });
