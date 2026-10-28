@@ -150,6 +150,7 @@ export class SettingsScreen {
 			const initial = all.findIndex((item) => item.value === (draft.model ? ProviderSettings.label(draft.model) : DISABLED));
 			const host = new Container();
 			const search = new Input({ placeholder: "Search models" });
+			setActiveInput(search);
 			const state = { list: SettingsScreen.selectList(all, SettingsScreen.listTheme(theme), Math.max(0, initial), done, setActiveInput) };
 			host.addChild(search);
 			host.addChild(new Spacer(1));
