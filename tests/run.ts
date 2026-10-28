@@ -1,5 +1,3 @@
-/** The OOP lint runs before the unit suite. */
-
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
