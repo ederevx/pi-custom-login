@@ -12,7 +12,7 @@ import {
 	type SimpleStreamOptions,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import { streamSimple as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import type { ModelRegistry, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -91,7 +91,7 @@ export class ProviderFallback {
 		if (model.api !== "openai-completions") {
 			throw new Error(`Unsupported primary API: ${model.api}`);
 		}
-		return streamCompletions(model as Model<"openai-completions">, context, options);
+		return openAICompletionsApi().streamSimple(model, context, options);
 	}
 
 	private async forwardPrimary(
