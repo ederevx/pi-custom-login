@@ -110,20 +110,12 @@ test("a body without a model list rejects", async () => {
 	await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "no model list");
 });
 
-test("only DeepSeek model families disable the developer role", async () => {
+test("catalog model names leave compatibility to pi", async () => {
 	respondWith({ data: ["deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "glm-5.3-flash", "qwen3.8-27b", "mimo-v2.6-flash", "my-deepseek-wrapper"].map((id) => ({ id })) });
 	const models = await new ModelCatalog(ENTRY).models(networked());
 	assertEq(
 		JSON.stringify(models.map((model) => model.compat)),
-		JSON.stringify([
-			{ supportsDeveloperRole: false },
-			{ supportsDeveloperRole: false },
-			{ supportsDeveloperRole: false },
-			null,
-			null,
-			null,
-			null,
-		]),
+		JSON.stringify([null, null, null, null, null, null, null]),
 	);
 	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
 });
