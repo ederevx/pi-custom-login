@@ -5,7 +5,6 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { AGENT_DIR_VARIABLE, CONFIG_FILE, type ProviderEntry } from "./provider-config.ts";
-import { ProviderSettings } from "./provider-settings.ts";
 
 export class ProviderStore {
 	private readonly path: string;
@@ -21,27 +20,13 @@ export class ProviderStore {
 	all(): Record<string, ProviderEntry> {
 		try {
 			const stored = JSON.parse(readFileSync(this.path, "utf8")) as { providers?: Record<string, ProviderEntry> };
-			return ProviderStore.validated(stored.providers ?? {});
+			return stored.providers ?? {};
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 				return {};
 			}
 			throw error;
 		}
-	}
-
-	/** Fallback settings read from disk go through the same validation the editor uses. */
-	private static validated(providers: Record<string, ProviderEntry>): Record<string, ProviderEntry> {
-		const validated: Record<string, ProviderEntry> = {};
-		for (const [id, entry] of Object.entries(providers)) {
-			if (typeof entry?.baseUrl !== "string" || entry.baseUrl === "") {
-				continue;
-			}
-			validated[id] = entry.fallback === undefined
-				? entry
-				: { ...entry, fallback: ProviderSettings.normalize(entry.fallback) };
-		}
-		return validated;
 	}
 
 	add(id: string, entry: ProviderEntry): void {

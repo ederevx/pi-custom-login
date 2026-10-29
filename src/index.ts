@@ -10,9 +10,6 @@ export class CustomLoginExtension {
 		const registry = new ProviderRegistry(pi);
 		registry.registerAll(store.all());
 		new ProviderCommand(pi, store, registry).register();
-		pi.on("session_start", (_event, ctx) => {
-			registry.bindSession(ctx.modelRegistry);
-		});
 	}
 }
 
