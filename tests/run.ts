@@ -13,12 +13,9 @@ try {
 	process.exit(1);
 }
 
-import "./import-surface.test.ts";
 import "./provider-store.test.ts";
 import "./model-catalog.test.ts";
 import "./provider-command.test.ts";
-import "./provider-settings.test.ts";
-import "./provider-fallback.test.ts";
 
 await registry.runAll();
 cleanupScratch();

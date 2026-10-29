@@ -9,7 +9,7 @@ endpoint without editing this package.
 ## Install
 
 ```bash
-pi install git:github.com/ederevx/pi-custom-login@v0.2.6
+pi install git:github.com/ederevx/pi-custom-login@v0.3.0
 ```
 
 The package has no runtime dependencies; it uses the host-provided
@@ -18,7 +18,6 @@ The package has no runtime dependencies; it uses the host-provided
 ## Register a provider
 
 ```
-/providers [settings [id]]
 /providers add <id> <baseUrl>
 /providers remove <id>
 /providers list
@@ -33,29 +32,6 @@ The registration is stored in `<agent-dir>/custom-providers.json`
 (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`) and replayed at every start.
 Run `/login <id>` afterwards to store the key in pi's credential store, then
 `/model` to pick a model from the catalog.
-
-## Failing over when a response does not start
-
-`/providers settings <id>` opens pi's usual settings screen: a fallback row
-that opens a searchable list of the models pi can offer, and a response-start
-timeout row. As in `/settings`, arrow keys move, Enter edits the selected row,
-and every change is saved as you make it; `Esc` closes the screen. The
-timeout belongs to the fallback, so it is stored with the chosen model, and
-editing it while the fallback is `Disabled` only keeps the value for the next
-choice. A request whose response has not begun producing content within that
-timeout aborts the attempt and is re-sent to the fallback model; the abort is
-best-effort, so the original server may still finish its own work.
-
-Only the start of a response counts. The first content event commits the
-request to the provider, and a transport error, an authentication failure, or a
-cancellation never falls over. Every later request tries the provider again.
-
-The fallback target must be a physical chat model of another provider that
-accepts the same inputs and has at least as large a context window. It is
-re-validated when it is used, and it is dispatched once: a fallback provider
-that has its own fallback configured cannot chain a second hop. Choosing
-`Disabled` removes the setting, a saved model that left the catalog is kept and
-marked, and a provider without a fallback is registered exactly as before.
 
 ## How the model list is built
 

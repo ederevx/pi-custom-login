@@ -26,9 +26,7 @@ class TestRegistry {
 		for (const testCase of this.cases) {
 			const started = Date.now();
 			try {
-				await Promise.race([testCase.fn(), new Promise((_, reject) =>
-					setTimeout(() => reject(new Error("test timed out")), 2000),
-				)]);
+				await testCase.fn();
 				this.passed += 1;
 				console.log(`  ok   ${testCase.name} (${Date.now() - started}ms)`);
 			} catch (error) {
@@ -57,10 +55,8 @@ export function assert(condition: unknown, message: string): asserts condition {
 }
 
 export function assertEq<T>(actual: T, expected: T, message?: string): void {
-	const shown = JSON.stringify(actual);
-	const wanted = JSON.stringify(expected);
-	if (actual !== expected && shown !== wanted) {
-		throw new Error(`${message ?? "assertEq"} — expected ${wanted}, got ${shown}`);
+	if (actual !== expected) {
+		throw new Error(`${message ?? "assertEq"} — expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 	}
 }
 
@@ -130,30 +126,6 @@ export class FakePi {
 
 	extension(): ExtensionAPI {
 		return this as unknown as ExtensionAPI;
-	}
-}
-
-/** A manual clock so timeout paths are deterministic. */
-export class FakeClock {
-	private pending: Array<{ fire: () => void; at: number; id: number }> = [];
-	private nextId = 1;
-	private now = 0;
-
-	setTimeout(callback: () => void, milliseconds: number): unknown {
-		const id = this.nextId++;
-		this.pending.push({ fire: callback, at: this.now + milliseconds, id });
-		return id;
-	}
-
-	clearTimeout(handle: unknown): void {
-		this.pending = this.pending.filter((entry) => entry.id !== handle);
-	}
-
-	advance(milliseconds: number): void {
-		this.now += milliseconds;
-		const due = this.pending.filter((entry) => entry.at <= this.now);
-		this.pending = this.pending.filter((entry) => entry.at > this.now);
-		for (const entry of due) entry.fire();
 	}
 }
 
