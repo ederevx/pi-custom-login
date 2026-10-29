@@ -22,7 +22,7 @@ export class CatalogEntry {
 			reasoning: this.effortLevels().length > 0,
 			input: this.optionalBoolean("vision") ? ["text", "image"] : ["text"],
 			contextWindow: this.optionalNumber("context_window") ?? DEFAULT_CONTEXT_WINDOW,
-			maxTokens: DEFAULT_MAX_TOKENS,
+			maxTokens: this.optionalNumber("max_output_tokens") ?? DEFAULT_MAX_TOKENS,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		};
 	}
