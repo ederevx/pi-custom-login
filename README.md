@@ -39,14 +39,14 @@ Every registered provider is an `openai-completions` provider with
 `authHeader: true` and an empty initial model list. pi calls the provider's
 `refreshModels` hook at startup, when `/model` opens, and after `/login`; the
 hook requests `GET <baseUrl>/models` with the credential pi resolved, maps each
-entry's `id`, `display_name`, `context_window`, `vision`, and
+entry's `id`, `display_name`, `context_window`, `max_output_tokens`, `vision`, and
 `reasoning.effort_levels`, and persists the result for the next start. Offline
 or without a credential the previously stored list is returned unchanged, and
 a failed, malformed, or unusable response leaves it untouched rather than
 emptying it. Re-adding an id replaces its registration.
 
-The catalog carries no price or output limit, so every model is registered with
-zero cost and a 16384-token output limit.
+Every model is registered with zero cost. Its output limit comes from
+`max_output_tokens` when present, otherwise it defaults to 16384 tokens.
 
 ## Limits
 

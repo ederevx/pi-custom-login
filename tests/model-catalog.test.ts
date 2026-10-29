@@ -51,7 +51,7 @@ function networked(overrides: Partial<CatalogRefreshContext> = {}): CatalogRefre
 test("a catalog maps the fields pi needs", async () => {
 	respondWith({
 		data: [
-			{ id: "glm-5.2", display_name: "GLM 5.2", context_window: 1000000, vision: true, reasoning: { effort_levels: ["high"] } },
+			{ id: "glm-5.2", display_name: "GLM 5.2", context_window: 1000000, max_output_tokens: 32768, vision: true, reasoning: { effort_levels: ["high"] } },
 			{ id: "qwen3.8-27b", context_window: 262144 },
 		],
 	});
@@ -66,7 +66,7 @@ test("a catalog maps the fields pi needs", async () => {
 			reasoning: true,
 			input: ["text", "image"],
 			contextWindow: 1000000,
-			maxTokens: 16384,
+			maxTokens: 32768,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		},
 		{
@@ -80,7 +80,7 @@ test("a catalog maps the fields pi needs", async () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		},
 	]));
-	assertEq(capture.persisted?.models.length, 2);
+	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
 	assertEq(typeof capture.persisted?.checkedAt, "number");
 });
 
@@ -119,6 +119,14 @@ test("catalog model names leave compatibility to pi", async () => {
 	);
 	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
 });
+
+for (const value of [0, -1, "32768", null, true, {}, [], NaN, Infinity]) {
+	test(`a catalog with max_output_tokens ${String(value)} rejects before persisting`, async () => {
+		respondWith({ data: [{ id: "valid" }, { id: "model", max_output_tokens: value }] });
+		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "Verboo: model catalog has an invalid max_output_tokens");
+		assertEq(capture.persisted, undefined);
+	});
+}
 
 const VALID = { id: "valid" };
 const MALFORMED: Array<[string, unknown]> = [
