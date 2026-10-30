@@ -1,8 +1,23 @@
+import { spawnSync } from "node:child_process";
+
 import { ModelCatalog } from "../src/model-catalog.ts";
-import type { CatalogRefreshContext, ProviderEntry } from "../src/provider-config.ts";
+import { CONTEXT_WINDOW_VARIABLE, MAX_TOKENS_VARIABLE, type CatalogRefreshContext, type ProviderEntry } from "../src/provider-config.ts";
 import { assertEq, assertRejects, test } from "./harness.ts";
 
+const CONFIG_MODULE = new URL("../src/provider-config.ts", import.meta.url).href;
+
 const ENTRY: ProviderEntry = { name: "Verboo", baseUrl: "https://code.verboo.ai/router/v1" };
+
+/** Loads the config module in a fresh process so module-load validation runs. */
+function loadFresh(variable: string, value: string | undefined): { status: number | null; stderr: string; limits: Record<string, number> } {
+	const env = { ...process.env };
+	delete env[CONTEXT_WINDOW_VARIABLE];
+	delete env[MAX_TOKENS_VARIABLE];
+	if (value !== undefined) env[variable] = value;
+	const script = `import * as c from "${CONFIG_MODULE}"; console.log(JSON.stringify({ [c.CONTEXT_WINDOW_VARIABLE]: c.DEFAULT_CONTEXT_WINDOW, [c.MAX_TOKENS_VARIABLE]: c.DEFAULT_MAX_TOKENS }));`;
+	const run = spawnSync(process.execPath, ["--experimental-strip-types", "--experimental-transform-types", "--input-type=module", "-e", script], { env, encoding: "utf8" });
+	return { status: run.status, stderr: run.stderr ?? "", limits: run.status === 0 ? JSON.parse(run.stdout.trim()) : {} };
+}
 const SIGNAL = new AbortController().signal;
 const KEY = { type: "api_key", key: "k" };
 
@@ -146,5 +161,28 @@ for (const [description, data] of MALFORMED) {
 		respondWith({ data });
 		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "model catalog");
 		assertEq(capture.persisted, undefined);
+	});
+}
+
+const FALLBACKS: Array<[string, number]> = [
+	[CONTEXT_WINDOW_VARIABLE, 131072],
+	[MAX_TOKENS_VARIABLE, 16384],
+];
+
+for (const [variable, builtin] of FALLBACKS) {
+	for (const value of ["0", "-1", "abc", "", "1.5", " 16384", "1e5", String(Number.MAX_SAFE_INTEGER + 1)]) {
+		test(`${variable}=${JSON.stringify(value)} stops the extension loading`, () => {
+			const loaded = loadFresh(variable, value);
+			assertEq(loaded.status !== 0, true, `${variable}=${value} loaded anyway`);
+			assertEq(loaded.stderr.includes(`${variable} is set but invalid`), true, loaded.stderr.slice(-300));
+		});
+	}
+
+	test(`${variable} unset uses the built-in limit`, () => {
+		assertEq(loadFresh(variable, undefined).limits[variable], builtin);
+	});
+
+	test(`${variable} replaces the built-in limit`, () => {
+		assertEq(loadFresh(variable, "4096").limits[variable], 4096);
 	});
 }
