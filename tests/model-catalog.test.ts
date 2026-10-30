@@ -343,6 +343,64 @@ test("a valid model ahead of an invalid metadata entry publishes nothing", async
 	assertEq(capture.persisted, undefined);
 });
 
+test("catalog token prices become per-million costs", async () => {
+	respondWith({
+		data: [
+			{
+				id: "priced",
+				pricing: {
+					prompt: "0.000001",
+					completion: "0.000002",
+					input_cache_read: "0.0000005",
+					input_cache_write: "0.00000125",
+					overrides: [{ min_prompt_tokens: 100, prompt: "1" }],
+				},
+			},
+			{ id: "unpriced" },
+		],
+	});
+	const models = await new ModelCatalog(ENTRY).models(networked());
+	assertEq(JSON.stringify(models.map((model) => model.cost)), JSON.stringify([
+		{ input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1.25 },
+		{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	]));
+	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
+});
+
+test("partial pricing preserves supplied costs", async () => {
+	respondWith({ data: [{ id: "partial", pricing: { completion: "0.000002" } }] });
+	const models = await new ModelCatalog(ENTRY).models(networked());
+	assertEq(JSON.stringify(models[0].cost), JSON.stringify({
+		input: 0, output: 2, cacheRead: 0, cacheWrite: 0,
+	}));
+});
+
+for (const pricing of [null, [], "0"]) {
+	test(`invalid pricing ${JSON.stringify(pricing)} rejects`, async () => {
+		respondWith({ data: [{ id: "valid" }, { id: "bad", pricing }] });
+		await assertRejects(
+			() => new ModelCatalog(ENTRY).models(networked()),
+			"has an invalid pricing",
+		);
+		assertEq(capture.persisted, undefined);
+	});
+}
+
+for (const field of ["prompt", "completion", "input_cache_read", "input_cache_write"]) {
+	for (const value of [0.3, null, true, {}, [], "", " ", "-1", "1e-6", "0x10", "oops", "9".repeat(400)]) {
+		test(`invalid pricing.${field} ${JSON.stringify(value)} rejects`, async () => {
+			respondWith({
+				data: [{ id: "valid" }, { id: "bad", pricing: { [field]: value } }],
+			});
+			await assertRejects(
+				() => new ModelCatalog(ENTRY).models(networked()),
+				"model catalog",
+			);
+			assertEq(capture.persisted, undefined);
+		});
+	}
+}
+
 const UNUSABLE_LIMITS = [1.5, Number.MAX_SAFE_INTEGER + 1];
 
 for (const value of UNUSABLE_LIMITS) {

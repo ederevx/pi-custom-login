@@ -59,10 +59,15 @@ supplementary field values are validated when consumed, so an unused value
 never overrides or invalidates an explicit data value. An empty `data` array
 is a valid catalog and replaces the stored list.
 
-Every model is registered with zero cost. Its output limit comes from
-`max_output_tokens` when present, otherwise it defaults to 16384 tokens; a
-`truncation_policy` is a tool-output truncation policy, not a requestable
-output cap, so it is never used for it.
+Model costs come from each data entry's OpenRouter-shaped `pricing` object:
+`prompt`, `completion`, `input_cache_read`, and `input_cache_write` are
+non-negative decimal strings in USD per token, converted to pi's USD per
+million tokens. Missing prices default to zero; malformed pricing objects or
+supported price fields fail the refresh without replacing the stored list.
+Other pricing formats and conditional pricing are not interpreted. Its output
+limit comes from `max_output_tokens` when present, otherwise it defaults to
+16384 tokens; a `truncation_policy` is a tool-output truncation policy, not a
+requestable output cap, so it is never used for it.
 
 Missing context and output limits fall back to
 `PI_CUSTOM_LOGIN_DEFAULT_CONTEXT_WINDOW` and
@@ -78,3 +83,13 @@ extension from loading.
   the provider is listed but has no models.
 - Models are listed exactly as the endpoint reports them, including those the
   account cannot use yet.
+- Zero cost can mean the catalog supplied no supported price; it does not
+  establish that a model is free. Ollama's catalog currently supplies no
+  prices. This package does not scrape pricing pages.
+- Costs are catalog snapshots, not billing totals; conditional rates and
+  non-token charges are not represented.
+- Pi 1.4.0 supports owner-maintained costs through
+  `providers.<provider-id>.modelOverrides.<exact-model-id>.cost` in
+  `<agent-dir>/models.json`, including refreshed extension models. Costs use
+  USD per million tokens. Omitted cost fields retain their existing values;
+  unknown model ids are ignored.
