@@ -76,7 +76,8 @@ export class CatalogEntry {
 
 	private price(source: Record<string, unknown> | undefined, field: string): number {
 		const value = this.text(source, field);
-		if (value === undefined) {
+		// The catalog's "-1" sentinel supplies no fixed price.
+		if (value === undefined || value === "-1") {
 			return 0;
 		}
 		const price = Number(value) * 1_000_000;

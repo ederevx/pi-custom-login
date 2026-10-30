@@ -62,9 +62,11 @@ is a valid catalog and replaces the stored list.
 Model costs come from each data entry's OpenRouter-shaped `pricing` object:
 `prompt`, `completion`, `input_cache_read`, and `input_cache_write` are
 non-negative decimal strings in USD per token, converted to pi's USD per
-million tokens. Missing prices default to zero; malformed pricing objects or
-supported price fields fail the refresh without replacing the stored list.
-Other pricing formats and conditional pricing are not interpreted. Its output
+million tokens. Missing prices and the exact string `"-1"` (no fixed price)
+default to zero; this does not mean the model is free. Other negative values
+are invalid. Malformed pricing objects or supported price fields fail the
+refresh without replacing the stored list. Other pricing formats and
+conditional pricing are not interpreted. Its output
 limit comes from `max_output_tokens` when present, otherwise it defaults to
 16384 tokens; a `truncation_policy` is a tool-output truncation policy, not a
 requestable output cap, so it is never used for it.

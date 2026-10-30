@@ -387,7 +387,7 @@ for (const pricing of [null, [], "0"]) {
 }
 
 for (const field of ["prompt", "completion", "input_cache_read", "input_cache_write"]) {
-	for (const value of [0.3, null, true, {}, [], "", " ", "-1", "1e-6", "0x10", "oops", "9".repeat(400)]) {
+	for (const value of [0.3, -1, null, true, {}, [], "", " ", "-2", "-1.0", "1e-6", "0x10", "oops", "9".repeat(400)]) {
 		test(`invalid pricing.${field} ${JSON.stringify(value)} rejects`, async () => {
 			respondWith({
 				data: [{ id: "valid" }, { id: "bad", pricing: { [field]: value } }],
@@ -400,6 +400,40 @@ for (const field of ["prompt", "completion", "input_cache_read", "input_cache_wr
 		});
 	}
 }
+
+test("price sentinels preserve the catalog and other prices", async () => {
+	for (const [field, costField] of [
+		["prompt", "input"],
+		["completion", "output"],
+		["input_cache_read", "cacheRead"],
+		["input_cache_write", "cacheWrite"],
+	] as const) {
+		respondWith({
+			data: [
+				{
+					id: "variable",
+					pricing: {
+						prompt: "0.000001",
+						completion: "0.000002",
+						input_cache_read: "0.0000005",
+						input_cache_write: "0.00000125",
+						[field]: "-1",
+					},
+				},
+				{ id: "zero", pricing: { prompt: "0" } },
+			],
+		});
+		const models = await new ModelCatalog(ENTRY).models(networked());
+		const expected = {
+			input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1.25,
+		};
+		expected[costField] = 0;
+		assertEq(models.length, 2);
+		assertEq(JSON.stringify(models[0].cost), JSON.stringify(expected));
+		assertEq(models[1].cost.input, 0);
+		assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
+	}
+});
 
 const UNUSABLE_LIMITS = [1.5, Number.MAX_SAFE_INTEGER + 1];
 
