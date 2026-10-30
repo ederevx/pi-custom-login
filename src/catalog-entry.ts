@@ -25,7 +25,7 @@ export class CatalogEntry {
 			input: (this.optionalBoolean("vision") ?? this.metadataVision(metadata)) === true ? ["text", "image"] : ["text"],
 			contextWindow: this.contextWindow(metadata),
 			maxTokens: this.limit(this.fields, "max_output_tokens") ?? this.limit(metadata, "max_output_tokens") ?? DEFAULT_MAX_TOKENS,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			cost: this.cost(),
 		};
 	}
 
@@ -57,6 +57,33 @@ export class CatalogEntry {
 			return this.effortLevels().length > 0;
 		}
 		return this.metadataEfforts(metadata).some((effort) => effort !== "none");
+	}
+
+	/** Prices are USD per token in the catalog, per million tokens in pi. */
+	private cost(): RefreshedModels[number]["cost"] {
+		const pricing = this.fields.pricing;
+		if (pricing !== undefined && (typeof pricing !== "object" || pricing === null || Array.isArray(pricing))) {
+			throw this.failure("has an invalid pricing");
+		}
+		const source = pricing as Record<string, unknown> | undefined;
+		return {
+			input: this.price(source, "prompt"),
+			output: this.price(source, "completion"),
+			cacheRead: this.price(source, "input_cache_read"),
+			cacheWrite: this.price(source, "input_cache_write"),
+		};
+	}
+
+	private price(source: Record<string, unknown> | undefined, field: string): number {
+		const value = this.text(source, field);
+		if (value === undefined) {
+			return 0;
+		}
+		const price = Number(value) * 1_000_000;
+		if (!/^\d+(?:\.\d+)?$/.test(value) || !Number.isFinite(price)) {
+			throw this.failure(`has an invalid pricing.${field}`);
+		}
+		return price;
 	}
 
 	private limit(source: Record<string, unknown> | undefined, field: string): number | undefined {
