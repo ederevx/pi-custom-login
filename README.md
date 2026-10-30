@@ -45,8 +45,30 @@ or without a credential the previously stored list is returned unchanged, and
 a failed, malformed, or unusable response leaves it untouched rather than
 emptying it. Re-adding an id replaces its registration.
 
+Some endpoints keep that metadata outside the entries: Ollama Cloud's
+`/v1/models` returns bare `data` entries beside a non-standard top-level
+`models` array. `data` defines the model list and its order; a missing field
+is filled from the top-level entry whose `slug` equals the id, and an explicit
+data value always wins. Context comes from `context_window`, or from
+`max_context_window` when that is absent; image support comes from
+`input_modalities` containing `image`; reasoning support comes from
+`supported_reasoning_levels` (an effort of `none` alone means no reasoning).
+Models the endpoint hides stay listed. A malformed metadata list, an entry
+without a slug, a duplicate slug, or a duplicate model id fails the refresh;
+supplementary field values are validated when consumed, so an unused value
+never overrides or invalidates an explicit data value. An empty `data` array
+is a valid catalog and replaces the stored list.
+
 Every model is registered with zero cost. Its output limit comes from
-`max_output_tokens` when present, otherwise it defaults to 16384 tokens.
+`max_output_tokens` when present, otherwise it defaults to 16384 tokens; a
+`truncation_policy` is a tool-output truncation policy, not a requestable
+output cap, so it is never used for it.
+
+Missing context and output limits fall back to
+`PI_CUSTOM_LOGIN_DEFAULT_CONTEXT_WINDOW` and
+`PI_CUSTOM_LOGIN_DEFAULT_MAX_TOKENS`, 131072 and 16384 by default. Explicit
+settings must be positive safe integers; an invalid setting stops the
+extension from loading.
 
 ## Limits
 
