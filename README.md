@@ -9,7 +9,7 @@ endpoint without editing this package.
 ## Install
 
 ```bash
-pi install git:github.com/ederevx/pi-custom-login@v0.6.0
+pi install git:github.com/ederevx/pi-custom-login@v0.7.0
 ```
 
 The package has no runtime dependencies; it uses the host-provided
@@ -113,3 +113,9 @@ extension from loading.
   USD per million tokens. Omitted cost fields retain their existing values;
   unknown model ids are ignored. A `models.json` value overrides this
   package's override for the same field.
+- Every catalog model is built with `compat.supportsDeveloperRole: false`, so
+  instructions go out as the standard `system` role rather than the
+  OpenAI-specific `developer` role that pi otherwise guesses for an unknown
+  base URL (which several OpenAI-compatible servers, DeepSeek included,
+  reject). Set `compat.supportsDeveloperRole: true` in `models.json` to opt
+  back in for a model that does accept it.
