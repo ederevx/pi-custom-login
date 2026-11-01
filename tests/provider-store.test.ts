@@ -52,3 +52,16 @@ test("a malformed file fails instead of hiding the damage", () => {
 	assertThrows(() => providers.all(), "JSON");
 });
 
+
+test("model overrides survive a save and reload", () => {
+	const providers = store("store-overrides");
+	providers.add("verboo", {
+		baseUrl: "https://code.verboo.ai/router/v1",
+		modelOverrides: { "glm-5.2": { contextWindow: 262144, cost: { input: 5 } } },
+	});
+	const reloaded = new ProviderStore(join(scratchDir(), "store-overrides")).all();
+	assertEq(
+		JSON.stringify(reloaded.verboo.modelOverrides),
+		JSON.stringify({ "glm-5.2": { contextWindow: 262144, cost: { input: 5 } } }),
+	);
+});

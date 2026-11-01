@@ -91,3 +91,17 @@ test("an unknown action prints the usage", async () => {
 	assertEq(ctx.notifications.at(-1)?.type, "warning");
 	assertEq(ctx.lastMessage.includes("add <id> <baseUrl>"), true);
 });
+
+test("re-adding an id keeps its model overrides", async () => {
+	const pi = new FakePi();
+	const store = new ProviderStore(`${scratchDir()}/command-readd-overrides`);
+	new ProviderCommand(pi.extension(), store, new ProviderRegistry(pi.extension())).register();
+	store.add("verboo", {
+		baseUrl: "https://old.example/v1",
+		modelOverrides: { "glm-5.2": { contextWindow: 262144 } },
+	});
+	await pi.command("providers", "add verboo https://code.verboo.ai/router/v1", new FakeCommandContext());
+	const entry = store.all().verboo;
+	assertEq(entry.baseUrl, "https://code.verboo.ai/router/v1");
+	assertEq(entry.modelOverrides?.["glm-5.2"]?.contextWindow, 262144);
+});

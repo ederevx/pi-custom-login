@@ -52,7 +52,11 @@ export class ProviderCommand {
 			ctx.ui.notify(`Usage: /${COMMAND_NAME} add <id> <baseUrl>`, "warning");
 			return;
 		}
-		const entry: ProviderEntry = { baseUrl: url };
+		// A re-add changes the URL, not the model overrides already edited for the id.
+		const existing = this.store.all()[providerId];
+		const entry: ProviderEntry = existing?.modelOverrides !== undefined
+			? { baseUrl: url, modelOverrides: existing.modelOverrides }
+			: { baseUrl: url };
 		this.store.add(providerId, entry);
 		this.registry.replace(providerId, entry);
 		ctx.ui.notify(`Added ${providerId}; run /login ${providerId} for its key, then /model`, "info");
