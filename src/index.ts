@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { ProviderCommand } from "./provider-command.ts";
 import { ProviderRegistry } from "./provider-registry.ts";
+import { ProviderSettingsCommand } from "./provider-settings-command.ts";
 import { ProviderStore } from "./provider-store.ts";
 
 export class CustomLoginExtension {
@@ -10,6 +11,7 @@ export class CustomLoginExtension {
 		const registry = new ProviderRegistry(pi);
 		registry.registerAll(store.all());
 		new ProviderCommand(pi, store, registry).register();
+		new ProviderSettingsCommand(pi, store, registry).register();
 	}
 }
 

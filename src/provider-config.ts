@@ -5,6 +5,7 @@ import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 export const AGENT_DIR_VARIABLE = "PI_CODING_AGENT_DIR";
 export const CONFIG_FILE = "custom-providers.json";
 export const COMMAND_NAME = "providers";
+export const COMMAND_NAME_SETTINGS = "providers-settings";
 export const DEFAULT_API = "openai-completions";
 export const CONTEXT_WINDOW_VARIABLE = "PI_CUSTOM_LOGIN_DEFAULT_CONTEXT_WINDOW";
 export const MAX_TOKENS_VARIABLE = "PI_CUSTOM_LOGIN_DEFAULT_MAX_TOKENS";
@@ -38,10 +39,23 @@ export class FallbackLimits {
 export const DEFAULT_CONTEXT_WINDOW = FallbackLimits.contextWindow();
 export const DEFAULT_MAX_TOKENS = FallbackLimits.maxTokens();
 
+/** A per-model override applied on top of the catalog's values for a provider. */
+export interface ModelOverride {
+	name?: string;
+	reasoning?: boolean;
+	contextWindow?: number;
+	maxTokens?: number;
+	cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+}
+
+/** Model id → override, stored beside the provider that owns the models. */
+export type ModelOverrides = Record<string, ModelOverride>;
+
 /** One provider as the user registered it. */
 export interface ProviderEntry {
 	name?: string;
 	baseUrl: string;
+	modelOverrides?: ModelOverrides;
 }
 
 /** The part of pi's refresh context this extension uses. */
