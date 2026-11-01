@@ -96,3 +96,19 @@ test("cancelling at the provider select records nothing", async () => {
 	assertEq(store.all().verboo.modelOverrides, undefined);
 	assertEq(pi.unregistered.length, 0);
 });
+
+test("cancelling at a value prompt notifies nothing", async () => {
+	const { pi, store } = registered("settings-cancel-value");
+	const ctx = new FakeCommandContext([undefined], [VERBOO, GLM, EDIT, "contextWindow"], { verboo: [GLM_MODEL] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(JSON.stringify(ctx.notifications), "[]");
+	assertEq(store.all().verboo.modelOverrides, undefined);
+});
+
+test("cancelling at the model list opens no prompt and records nothing", async () => {
+	const { pi, store } = registered("settings-cancel-model");
+	const ctx = new FakeCommandContext(["unused"], [VERBOO, undefined], { verboo: [GLM_MODEL] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(JSON.stringify(ctx.notifications), "[]");
+	assertEq(store.all().verboo.modelOverrides, undefined);
+});

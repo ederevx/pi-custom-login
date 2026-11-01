@@ -579,7 +579,9 @@ for (const [description, override] of [
 	["a non-number cost", { cost: { output: "3" } }],
 	["an unknown key", { turbo: true }],
 	["an unknown cost key", { cost: { tax: 1 } }],
-] as Array<[string, Record<string, unknown>]>) {
+	["a null override", null],
+	["a non-object cost", { cost: 5 }],
+] as Array<[string, unknown]>) {
 	test(`an override with ${description} rejects before any request`, async () => {
 		respondWith({ data: [{ id: "m" }] });
 		const entry: ProviderEntry = { baseUrl: "https://code.verboo.ai/router/v1", modelOverrides: { m: override } };

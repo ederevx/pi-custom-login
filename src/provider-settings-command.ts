@@ -88,7 +88,10 @@ export class ProviderSettingsCommand {
 		}
 		const labels = new Map(models.map((model) => [`${model.id} — ${model.name}`, model.id]));
 		const choice = await ctx.ui.select("Model", [...labels.keys(), ProviderSettingsCommand.MANUAL]);
-		if (choice === undefined || choice === ProviderSettingsCommand.MANUAL) {
+		if (choice === undefined) {
+			return undefined;
+		}
+		if (choice === ProviderSettingsCommand.MANUAL) {
 			return this.manualModel(providerId, ctx);
 		}
 		return labels.get(choice);
@@ -112,6 +115,9 @@ export class ProviderSettingsCommand {
 			return;
 		}
 		const value = await this.value(field, providerId, modelId, ctx);
+		if (value === null) {
+			return;
+		}
 		if (value === undefined) {
 			ctx.ui.notify(`${field.label} expects ${ProviderSettingsCommand.expectation(field)}`, "warning");
 			return;
@@ -124,10 +130,13 @@ export class ProviderSettingsCommand {
 		const current = this.current(field, providerId, modelId, ctx);
 		if (field.kind === "boolean") {
 			const choice = await ctx.ui.select(`${field.label} (current: ${current})`, ["true", "false"]);
-			return choice === undefined ? undefined : choice === "true";
+			return choice === undefined ? null : choice === "true";
 		}
 		const answer = (await ctx.ui.input(`${field.label}${current === "" ? "" : ` (current: ${current})`}`))?.trim();
-		if (answer === undefined || answer === "") {
+		if (answer === undefined) {
+			return null;
+		}
+		if (answer === "") {
 			return undefined;
 		}
 		if (field.kind === "text") {
