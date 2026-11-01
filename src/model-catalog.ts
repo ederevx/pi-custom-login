@@ -20,7 +20,7 @@ export class ModelCatalog {
 		const stored = [...(context.stored?.models ?? [])];
 		const apiKey = context.credential?.type === "api_key" ? context.credential.key : undefined;
 		if (!apiKey || !context.allowNetwork) {
-			return this.applyOverrides(stored);
+			return this.applyOverrides(this.baseline(stored));
 		}
 		const response = await fetch(`${this.entry.baseUrl}/models`, {
 			headers: { Authorization: `Bearer ${apiKey}` },
@@ -31,7 +31,7 @@ export class ModelCatalog {
 		}
 		const models = this.parse(await response.json());
 		await context.publish({ persist: { models, checkedAt: Date.now() } });
-		return this.applyOverrides(models);
+		return this.applyOverrides(this.baseline(models));
 	}
 
 	/** Everything is validated before anything is persisted. */
@@ -55,6 +55,14 @@ export class ModelCatalog {
 
 	private label(): string {
 		return this.entry.name ?? this.entry.baseUrl;
+	}
+
+	/** The extension claims only OpenAI compatibility, whose instruction role is
+	 *  `system`; pi otherwise guesses `developer` for an unrecognized base URL,
+	 *  which several OpenAI-compatible servers (DeepSeek among them) reject. The
+	 *  saved list stays raw, so the key is re-applied on every return. */
+	private baseline(models: RefreshedModels): RefreshedModels {
+		return models.map((model) => ({ ...model, compat: { supportsDeveloperRole: false, ...model.compat } }));
 	}
 
 	private failure(problem: string): Error {

@@ -83,6 +83,7 @@ test("a catalog maps the fields pi needs", async () => {
 			contextWindow: 1000000,
 			maxTokens: 32768,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			compat: { supportsDeveloperRole: false },
 		},
 		{
 			id: "qwen3.8-27b",
@@ -93,9 +94,10 @@ test("a catalog maps the fields pi needs", async () => {
 			contextWindow: 262144,
 			maxTokens: 16384,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			compat: { supportsDeveloperRole: false },
 		},
 	]));
-	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
+	assertEq(JSON.stringify(capture.persisted?.models.map((model) => "compat" in model)), JSON.stringify([false, false]));
 	assertEq(typeof capture.persisted?.checkedAt, "number");
 });
 
@@ -104,6 +106,7 @@ test("offline keeps the stored list without a request", async () => {
 	const stored = [{ id: "stored" }] as never;
 	const models = await new ModelCatalog(ENTRY).models(context({ stored: { models: stored }, allowNetwork: false }));
 	assertEq(models.length, 1);
+	assertEq(JSON.stringify(models.map((model) => model.compat)), JSON.stringify([{ supportsDeveloperRole: false }]));
 	assertEq(capture.requests, 0);
 });
 
@@ -125,14 +128,14 @@ test("a body without a model list rejects", async () => {
 	await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "no model list");
 });
 
-test("catalog model names leave compatibility to pi", async () => {
+test("the developer-role baseline applies to every model regardless of name", async () => {
 	respondWith({ data: ["deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "glm-5.3-flash", "qwen3.8-27b", "mimo-v2.6-flash", "my-deepseek-wrapper"].map((id) => ({ id })) });
 	const models = await new ModelCatalog(ENTRY).models(networked());
 	assertEq(
 		JSON.stringify(models.map((model) => model.compat)),
-		JSON.stringify([null, null, null, null, null, null, null]),
+		JSON.stringify(models.map(() => ({ supportsDeveloperRole: false }))),
 	);
-	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
+	assertEq(JSON.stringify(capture.persisted?.models.map((model) => "compat" in model)), JSON.stringify(models.map(() => false)));
 });
 
 const OLLAMA_METADATA = [
@@ -188,7 +191,7 @@ test("an ollama-shaped catalog takes missing metadata from its top-level models 
 		]),
 	);
 	assertEq(JSON.stringify(models.map((model) => model.maxTokens)), JSON.stringify([DEFAULT_MAX_TOKENS, DEFAULT_MAX_TOKENS, DEFAULT_MAX_TOKENS]));
-	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
+	assertEq(JSON.stringify(capture.persisted?.models.map((model) => "compat" in model)), JSON.stringify([false, false, false]));
 });
 
 test("metadata for a model the catalog does not list adds nothing", async () => {
@@ -290,7 +293,7 @@ test("explicit entry values leave contradictory metadata unread", async () => {
 		JSON.stringify(models.map((model) => [model.contextWindow, model.reasoning, model.input])),
 		JSON.stringify([[1000000, true, ["text", "image"]]]),
 	);
-	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
+	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))));
 });
 
 test("a blank metadata display name falls back to the id", async () => {
@@ -325,7 +328,7 @@ test("metadata fields the entry already supplies are never validated", async () 
 		JSON.stringify(models.map((model) => [model.name, model.contextWindow, model.maxTokens, model.reasoning, model.input])),
 		JSON.stringify([["Entry", 1000000, 32768, true, ["text", "image"]]]),
 	);
-	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
+	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))));
 });
 
 test("a duplicate model id rejects before persisting", async () => {
@@ -364,7 +367,7 @@ test("catalog token prices become per-million costs", async () => {
 		{ input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1.25 },
 		{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	]));
-	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
+	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))));
 });
 
 test("partial pricing preserves supplied costs", async () => {
@@ -431,7 +434,7 @@ test("price sentinels preserve the catalog and other prices", async () => {
 		assertEq(models.length, 2);
 		assertEq(JSON.stringify(models[0].cost), JSON.stringify(expected));
 		assertEq(models[1].cost.input, 0);
-		assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models));
+		assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))));
 	}
 });
 
@@ -536,6 +539,7 @@ test("an override wins over the catalog while the raw list is persisted", async 
 			contextWindow: 262144,
 			maxTokens: 8192,
 			cost: { input: 5, output: 2, cacheRead: 0, cacheWrite: 0 },
+			compat: { supportsDeveloperRole: false },
 		}),
 	);
 	assertEq(
