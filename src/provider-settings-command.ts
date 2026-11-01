@@ -84,14 +84,25 @@ export class ProviderSettingsCommand {
 		const models = ctx.modelRegistry.getModelsOfType("chat", providerId);
 		if (models.length === 0) {
 			ctx.ui.notify(`No models known for ${providerId} yet; its catalog has not been fetched`, "info");
-			return (await ctx.ui.input("Model id"))?.trim() || undefined;
+			return this.manualModel(providerId, ctx);
 		}
 		const labels = new Map(models.map((model) => [`${model.id} — ${model.name}`, model.id]));
 		const choice = await ctx.ui.select("Model", [...labels.keys(), ProviderSettingsCommand.MANUAL]);
 		if (choice === undefined || choice === ProviderSettingsCommand.MANUAL) {
-			return (await ctx.ui.input("Model id"))?.trim() || undefined;
+			return this.manualModel(providerId, ctx);
 		}
 		return labels.get(choice);
+	}
+
+	private async manualModel(providerId: string, ctx: ExtensionCommandContext): Promise<string | undefined> {
+		const modelId = (await ctx.ui.input("Model id"))?.trim() || undefined;
+		if (modelId === undefined) {
+			return undefined;
+		}
+		if (ctx.modelRegistry.getModelOfType("chat", providerId, modelId) === undefined) {
+			ctx.ui.notify(`${modelId} is not in the catalog yet; the override does nothing until the catalog returns it`, "warning");
+		}
+		return modelId;
 	}
 
 	private async edit(providerId: string, entry: ProviderEntry, modelId: string, ctx: ExtensionCommandContext): Promise<void> {

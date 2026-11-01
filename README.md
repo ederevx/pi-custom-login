@@ -104,8 +104,12 @@ extension from loading.
   prices. This package does not scrape pricing pages.
 - Costs are catalog snapshots, not billing totals; conditional rates and
   non-token charges are not represented.
-- Pi 1.4.0 supports owner-maintained costs through
+- Owner-maintained costs — and the other model fields — are edited with
+  `/providers-settings`; the values live in `custom-providers.json` under the
+  provider and are re-applied on every catalog refresh.
+- On top of those, pi 1.4.0 also supports owner-maintained costs through
   `providers.<provider-id>.modelOverrides.<exact-model-id>.cost` in
   `<agent-dir>/models.json`, including refreshed extension models. Costs use
   USD per million tokens. Omitted cost fields retain their existing values;
-  unknown model ids are ignored.
+  unknown model ids are ignored. A `models.json` value overrides this
+  package's override for the same field.

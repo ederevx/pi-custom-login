@@ -577,6 +577,8 @@ for (const [description, override] of [
 	["a non-positive max tokens", { maxTokens: 0 }],
 	["a negative cost", { cost: { input: -1 } }],
 	["a non-number cost", { cost: { output: "3" } }],
+	["an unknown key", { turbo: true }],
+	["an unknown cost key", { cost: { tax: 1 } }],
 ] as Array<[string, Record<string, unknown>]>) {
 	test(`an override with ${description} rejects before any request`, async () => {
 		respondWith({ data: [{ id: "m" }] });

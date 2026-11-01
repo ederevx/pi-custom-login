@@ -5,6 +5,10 @@ import { CatalogMetadata } from "./catalog-metadata.ts";
 import type { CatalogRefreshContext, ModelOverride, ProviderEntry, RefreshedModels } from "./provider-config.ts";
 
 export class ModelCatalog {
+	/** The only override keys the catalog recognizes; anything else is a stored mistake. */
+	private static readonly FIELDS = new Set(["name", "reasoning", "contextWindow", "maxTokens", "cost"]);
+	private static readonly COST_FIELDS = new Set(["input", "output", "cacheRead", "cacheWrite"]);
+
 	private readonly entry: ProviderEntry;
 
 	constructor(entry: ProviderEntry) {
@@ -99,6 +103,11 @@ export class ModelCatalog {
 	}
 
 	private validateOverride(id: string, override: ModelOverride): void {
+		for (const key of Object.keys(override)) {
+			if (!ModelCatalog.FIELDS.has(key)) {
+				throw this.failure(`has an unknown modelOverrides.${id}.${key}`);
+			}
+		}
 		if (override.name !== undefined && (typeof override.name !== "string" || override.name.trim() === "")) {
 			throw this.failure(`has an invalid modelOverrides.${id}.name`);
 		}
@@ -112,6 +121,11 @@ export class ModelCatalog {
 			this.limit(override.maxTokens, `modelOverrides.${id}.maxTokens`);
 		}
 		if (override.cost !== undefined) {
+			for (const key of Object.keys(override.cost)) {
+				if (!ModelCatalog.COST_FIELDS.has(key)) {
+					throw this.failure(`has an unknown modelOverrides.${id}.cost.${key}`);
+				}
+			}
 			this.validateCost(override.cost.input, `modelOverrides.${id}.cost.input`);
 			this.validateCost(override.cost.output, `modelOverrides.${id}.cost.output`);
 			this.validateCost(override.cost.cacheRead, `modelOverrides.${id}.cost.cacheRead`);
