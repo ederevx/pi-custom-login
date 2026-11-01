@@ -103,6 +103,9 @@ export class ModelCatalog {
 	}
 
 	private validateOverride(id: string, override: ModelOverride): void {
+		if (typeof override !== "object" || override === null || Array.isArray(override)) {
+			throw this.failure(`has an invalid modelOverrides.${id}`);
+		}
 		for (const key of Object.keys(override)) {
 			if (!ModelCatalog.FIELDS.has(key)) {
 				throw this.failure(`has an unknown modelOverrides.${id}.${key}`);
@@ -121,6 +124,9 @@ export class ModelCatalog {
 			this.limit(override.maxTokens, `modelOverrides.${id}.maxTokens`);
 		}
 		if (override.cost !== undefined) {
+			if (typeof override.cost !== "object" || override.cost === null || Array.isArray(override.cost)) {
+				throw this.failure(`has an invalid modelOverrides.${id}.cost`);
+			}
 			for (const key of Object.keys(override.cost)) {
 				if (!ModelCatalog.COST_FIELDS.has(key)) {
 					throw this.failure(`has an unknown modelOverrides.${id}.cost.${key}`);
