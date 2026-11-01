@@ -133,16 +133,35 @@ export class FakePi {
 export class FakeCommandContext {
 	readonly notifications: Array<{ message: string; type?: string }> = [];
 	private readonly answers: Array<string | undefined>;
+	private readonly selections: Array<string | undefined>;
+	private readonly knownModels: ReadonlyMap<string, Array<Record<string, unknown>>>;
 
 	readonly ui = {
 		notify: (message: string, type?: "info" | "warning" | "error"): void => {
 			this.notifications.push({ message, type });
 		},
 		input: async (): Promise<string | undefined> => this.answers.shift(),
+		select: async (_title: string, options: readonly string[]): Promise<string | undefined> => {
+			const choice = this.selections.shift();
+			return choice !== undefined && options.includes(choice) ? choice : undefined;
+		},
 	};
 
-	constructor(answers: Array<string | undefined> = []) {
+	readonly modelRegistry = {
+		getModelsOfType: (_type: string, providerId?: string): unknown[] =>
+			(providerId === undefined ? [] : [...(this.knownModels.get(providerId) ?? [])]).map((model) => ({ provider: providerId, ...model })),
+		getModelOfType: (_type: string, providerId: string, modelId: string): unknown =>
+			this.knownModels.get(providerId)?.find((model) => model.id === modelId),
+	};
+
+	constructor(
+		answers: Array<string | undefined> = [],
+		selections: Array<string | undefined> = [],
+		knownModels: Record<string, Array<Record<string, unknown>>> = {},
+	) {
 		this.answers = [...answers];
+		this.selections = [...selections];
+		this.knownModels = new Map(Object.entries(knownModels));
 	}
 
 	get lastMessage(): string {

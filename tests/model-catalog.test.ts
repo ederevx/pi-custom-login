@@ -503,3 +503,86 @@ for (const [variable, builtin] of FALLBACKS) {
 		assertEq(loadFresh(variable, "4096").limits[variable], 4096);
 	});
 }
+
+test("an override wins over the catalog while the raw list is persisted", async () => {
+	respondWith({
+		data: [
+			{
+				id: "glm-5.2",
+				display_name: "GLM 5.2",
+				context_window: 1000000,
+				max_output_tokens: 32768,
+				vision: true,
+				reasoning: { effort_levels: ["high"] },
+				pricing: { prompt: "0.000001", completion: "0.000002" },
+			},
+		],
+	});
+	const entry: ProviderEntry = {
+		...ENTRY,
+		modelOverrides: {
+			"glm-5.2": { name: "Renamed", reasoning: false, contextWindow: 262144, maxTokens: 8192, cost: { input: 5 } },
+		},
+	};
+	const models = await new ModelCatalog(entry).models(networked());
+	assertEq(
+		JSON.stringify(models[0]),
+		JSON.stringify({
+			id: "glm-5.2",
+			name: "Renamed",
+			api: "openai-completions",
+			reasoning: false,
+			input: ["text", "image"],
+			contextWindow: 262144,
+			maxTokens: 8192,
+			cost: { input: 5, output: 2, cacheRead: 0, cacheWrite: 0 },
+		}),
+	);
+	assertEq(
+		JSON.stringify(capture.persisted?.models?.[0]),
+		JSON.stringify({
+			id: "glm-5.2",
+			name: "GLM 5.2",
+			api: "openai-completions",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 32768,
+			cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+		}),
+	);
+});
+
+test("the stored list is overridden offline too", async () => {
+	respondWith({ data: [] });
+	const stored = [{ id: "m", contextWindow: 1000 }] as never;
+	const entry: ProviderEntry = { baseUrl: "https://code.verboo.ai/router/v1", modelOverrides: { m: { contextWindow: 4096 } } };
+	const models = await new ModelCatalog(entry).models(context({ stored: { models: stored }, allowNetwork: false }));
+	assertEq(models[0].contextWindow, 4096);
+	assertEq(capture.requests, 0);
+});
+
+test("an override for a model the catalog does not list changes nothing", async () => {
+	respondWith({ data: [{ id: "m" }] });
+	const entry: ProviderEntry = { baseUrl: "https://code.verboo.ai/router/v1", modelOverrides: { elsewhere: { contextWindow: 4096 } } };
+	const models = await new ModelCatalog(entry).models(networked());
+	assertEq(JSON.stringify(models.map((model) => model.contextWindow)), JSON.stringify([DEFAULT_CONTEXT_WINDOW]));
+});
+
+for (const [description, override] of [
+	["a non-string name", { name: 7 }],
+	["a blank name", { name: "   " }],
+	["a non-boolean reasoning", { reasoning: "yes" }],
+	["a non-integer context window", { contextWindow: 1.5 }],
+	["a non-positive max tokens", { maxTokens: 0 }],
+	["a negative cost", { cost: { input: -1 } }],
+	["a non-number cost", { cost: { output: "3" } }],
+] as Array<[string, Record<string, unknown>]>) {
+	test(`an override with ${description} rejects before any request`, async () => {
+		respondWith({ data: [{ id: "m" }] });
+		const entry: ProviderEntry = { baseUrl: "https://code.verboo.ai/router/v1", modelOverrides: { m: override } };
+		await assertRejects(() => new ModelCatalog(entry).models(networked()), "model catalog");
+		assertEq(capture.requests, 0);
+		assertEq(capture.persisted, undefined);
+	});
+}

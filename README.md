@@ -9,7 +9,7 @@ endpoint without editing this package.
 ## Install
 
 ```bash
-pi install git:github.com/ederevx/pi-custom-login@v0.5.2
+pi install git:github.com/ederevx/pi-custom-login@v0.6.0
 ```
 
 The package has no runtime dependencies; it uses the host-provided
@@ -32,6 +32,20 @@ The registration is stored in `<agent-dir>/custom-providers.json`
 (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`) and replayed at every start.
 Run `/login <id>` afterwards to store the key in pi's credential store, then
 `/model` to pick a model from the catalog.
+
+## Edit a model configuration
+
+`/providers-settings` opens a menu that edits one model of one registered
+provider: `name`, `reasoning`, `contextWindow`, `maxTokens`, and the four
+`cost` fields (`input`, `output`, `cacheRead`, `cacheWrite`, USD per million
+tokens). The edit is stored under the provider in `custom-providers.json`
+and applied on top of the catalog's own values on every refresh, online or
+offline; clearing a model's override returns it to the catalog's values.
+Saved edits apply the next time the model list refreshes (open `/model` or
+restart).
+
+These overrides sit below pi's own `models.json` layer: a value in
+`providers.<provider-id>.modelOverrides.<exact-model-id>` there still wins.
 
 ## How the model list is built
 
