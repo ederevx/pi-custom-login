@@ -2,6 +2,9 @@
 
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
+/** The chat half of pi's model configuration, whose fields an override can set. */
+type ChatModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
+
 export const AGENT_DIR_VARIABLE = "PI_CODING_AGENT_DIR";
 export const CONFIG_FILE = "custom-providers.json";
 export const COMMAND_NAME = "providers";
@@ -43,9 +46,17 @@ export const DEFAULT_MAX_TOKENS = FallbackLimits.maxTokens();
 export interface ModelOverride {
 	name?: string;
 	reasoning?: boolean;
+	thinkingLevelMap?: ChatModelConfig["thinkingLevelMap"];
+	input?: ChatModelConfig["input"];
+	inputLimits?: ChatModelConfig["inputLimits"];
+	cost?: Partial<ChatModelConfig["cost"]>;
+	promptCache?: ChatModelConfig["promptCache"];
 	contextWindow?: number;
 	maxTokens?: number;
-	cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+	samplingParams?: ChatModelConfig["samplingParams"];
+	samplingParamsByThinkingLevel?: ChatModelConfig["samplingParamsByThinkingLevel"];
+	headers?: ChatModelConfig["headers"];
+	compat?: ChatModelConfig["compat"];
 }
 
 /** Model id → override, stored beside the provider that owns the models. */

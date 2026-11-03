@@ -36,13 +36,25 @@ Run `/login <id>` afterwards to store the key in pi's credential store, then
 ## Edit a model configuration
 
 `/providers-settings` opens a menu that edits one model of one registered
-provider: `name`, `reasoning`, `contextWindow`, `maxTokens`, and the four
-`cost` fields (`input`, `output`, `cacheRead`, `cacheWrite`, USD per million
-tokens). The edit is stored under the provider in `custom-providers.json`
-and applied on top of the catalog's own values on every refresh, online or
-offline; clearing a model's override returns it to the catalog's values.
-Saved edits apply the next time the model list refreshes (open `/model` or
-restart).
+provider. Every field pi accepts for a model can be overridden:
+
+| Field | Meaning |
+| --- | --- |
+| `name`, `reasoning` | Display name, and whether the model accepts a thinking level. |
+| `thinkingLevelMap`, `compat` | pi's per-level and per-API request adaptations; see pi's `docs/models-configuration.md`. |
+| `input`, `inputLimits` | Accepted modalities, and the request-size and image limits. |
+| `cost` | USD per million tokens: `input`, `output`, `cacheRead`, `cacheWrite`, and request-wide `tiers` keyed by `inputTokensAbove`. |
+| `promptCache` | Prompt-cache lifetimes in seconds. |
+| `contextWindow`, `maxTokens` | Context and output limits. |
+| `samplingParams`, `samplingParamsByThinkingLevel` | Extra request-body fields for OpenAI-compatible endpoints. |
+| `headers` | Extra request headers. |
+
+The edit is stored under the provider in `custom-providers.json` and applied on
+top of the catalog's own values on every refresh, online or offline; clearing a
+model's override returns it to the catalog's values. Object-valued fields merge
+field by field over the model, as they do in pi's own `modelOverrides`, while
+arrays and single values replace. Saved edits apply the next time the model
+list refreshes (open `/model` or restart).
 
 These overrides sit below pi's own `models.json` layer: a value in
 `providers.<provider-id>.modelOverrides.<exact-model-id>` there still wins.
