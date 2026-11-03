@@ -50,15 +50,24 @@ provider. Every field pi accepts for a model can be overridden:
 | `samplingParams`, `samplingParamsByThinkingLevel` | Extra request-body fields for OpenAI-compatible endpoints. |
 | `headers` | Extra request headers. |
 
+The menu is three screens - provider, model, and that model's fields - and
+Escape steps back one screen at a time, leaving `/providers-settings` only from
+the provider list. The model list narrows as you type, matching the search in
+`/model`, and "Enter a model id" stays available for a model the catalog has
+not returned yet. The fields screen lists every field with the value it
+currently resolves to beside it, marks whether that value is the override or
+the catalog's, and searches the same way; its `override` row clears the whole
+model's override. A field's choices open the value to type, the modalities to
+choose, the fallback picker, and "Clear override" when that one field is
+stored.
+
 The edit is stored under the provider in `custom-providers.json` and applied on
 top of the catalog's own values on every refresh, online or offline; clearing a
-model's override returns it to the catalog's values. Each field is edited on
-its own: a single value or a JSON object is typed, `input` chooses between
-text-only and text-and-image, and "Clear a field" removes one stored value.
-An edit the catalog would reject is refused and nothing is written. Object-valued
-fields merge field by field over the model, as they do in pi's own
-`modelOverrides`, while arrays and single values replace. Saved edits apply the
-next time the model list refreshes (open `/model` or restart).
+model's override returns it to the catalog's values. An edit the catalog would
+reject is refused and nothing is written. Object-valued fields merge field by
+field over the model, as they do in pi's own `modelOverrides`, while arrays and
+single values replace. Saved edits apply the next time the model list refreshes
+(open `/model` or restart).
 
 These overrides sit below pi's own `models.json` layer: a value in
 `providers.<provider-id>.modelOverrides.<exact-model-id>` there still wins.

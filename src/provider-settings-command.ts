@@ -1,12 +1,14 @@
 /** The `/providers-settings` command: edit or clear per-model overrides for a registered provider. */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { SelectItem } from "@earendil-works/pi-tui";
 
 import { FallbackChain } from "./fallback-chain.ts";
 import { ModelOverrideRules } from "./model-override-rules.ts";
 import { COMMAND_NAME_SETTINGS, type ModelFallback, type ModelOverride, type ModelOverrides, type ProviderEntry } from "./provider-config.ts";
 import { ProviderRegistry } from "./provider-registry.ts";
 import { ProviderStore } from "./provider-store.ts";
+import { SettingsDialogs, type SettingRow } from "./settings-dialogs.ts";
 
 interface EditableField {
 	readonly label: string;
@@ -38,10 +40,17 @@ export class ProviderSettingsCommand {
 	];
 	private static readonly MODALITIES = new Map([["text", ["text"]], ["text, image", ["text", "image"]]]);
 
-	private static readonly EDIT = "Edit a field";
-	private static readonly CLEAR_FIELD = "Clear a field";
+	private static readonly EDIT_VALUE = "Edit value";
+	private static readonly CHOOSE_FALLBACK = "Choose a model";
+	private static readonly CLEAR_FIELD = "Clear override";
+	private static readonly OVERRIDE = "override";
 	private static readonly CLEAR = "Clear this model's override";
-	private static readonly MANUAL = "Enter a model id";
+	private static readonly MANUAL_VALUE = "";
+	private static readonly MANUAL_ITEM: SelectItem = { value: ProviderSettingsCommand.MANUAL_VALUE, label: "Enter a model id" };
+	private static readonly UNSET = "not set";
+	private static readonly OVERRIDDEN = "Overridden for this model";
+	private static readonly CATALOG = "From the provider catalog";
+	private static readonly OVERRIDE_HINT = "Remove every stored value for this model";
 
 	private readonly pi: ExtensionAPI;
 	private readonly store: ProviderStore;
@@ -60,6 +69,10 @@ export class ProviderSettingsCommand {
 		});
 	}
 
+	/**
+	 * Provider, model and field screens, with the path to the current one kept here: a screen
+	 * answered with nothing steps back a level, and only the provider screen can end the command.
+	 */
 	private async run(args: string, ctx: ExtensionCommandContext): Promise<void> {
 		void args;
 		const providers = this.store.all();
@@ -68,51 +81,66 @@ export class ProviderSettingsCommand {
 			ctx.ui.notify("No custom providers; add one with /providers add", "warning");
 			return;
 		}
-		const providerId = await this.chooseProvider(ids, providers, ctx);
-		if (!providerId) {
-			return;
+		const dialogs = new SettingsDialogs(ctx);
+		const path: string[] = [];
+		let selected: string | undefined;
+		for (;;) {
+			const [providerId, modelId] = path;
+			const answer =
+				providerId === undefined
+					? await this.chooseProvider(dialogs, ids, providers, selected)
+					: modelId === undefined
+						? await this.chooseModel(providerId, dialogs, ctx, selected)
+						: await this.changeField(providerId, modelId, dialogs, ctx, selected);
+			if (answer === undefined) {
+				if (path.length === 0) {
+					return;
+				}
+				selected = path.pop();
+				continue;
+			}
+			if (path.length < 2) {
+				path.push(answer);
+				selected = undefined;
+			} else {
+				selected = answer;
+			}
 		}
-		const modelId = await this.chooseModel(providerId, ctx);
-		if (!modelId) {
-			return;
-		}
-		const actions = [ProviderSettingsCommand.EDIT, ProviderSettingsCommand.CLEAR_FIELD, ProviderSettingsCommand.CLEAR];
-		const action = await ctx.ui.select(`${providerId} / ${modelId}`, actions);
-		if (!action) {
-			return;
-		}
-		if (action === ProviderSettingsCommand.CLEAR) {
-			this.clear(providerId, providers[providerId], modelId, ctx);
-			return;
-		}
-		if (action === ProviderSettingsCommand.CLEAR_FIELD) {
-			await this.clearField(providerId, providers[providerId], modelId, ctx);
-			return;
-		}
-		await this.edit(providerId, providers[providerId], modelId, ctx);
 	}
 
-	private async chooseProvider(ids: string[], providers: Record<string, ProviderEntry>, ctx: ExtensionCommandContext): Promise<string | undefined> {
-		const labels = new Map(ids.map((id) => [`${id} ${providers[id].baseUrl}`, id]));
-		const choice = await ctx.ui.select("Provider", [...labels.keys()]);
-		return choice === undefined ? undefined : labels.get(choice);
+	private async chooseProvider(dialogs: SettingsDialogs, ids: readonly string[], providers: Record<string, ProviderEntry>, selected?: string): Promise<string | undefined> {
+		const entries = ids.map((id) => {
+			const baseUrl = providers[id]?.baseUrl ?? "";
+			return { item: { value: id, label: id, description: baseUrl }, search: `${id} ${baseUrl}` };
+		});
+		return dialogs.pick("Provider", entries, [], false, selected);
 	}
 
-	private async chooseModel(providerId: string, ctx: ExtensionCommandContext): Promise<string | undefined> {
+	private async chooseModel(providerId: string, dialogs: SettingsDialogs, ctx: ExtensionCommandContext, selected?: string): Promise<string | undefined> {
 		const models = ctx.modelRegistry.getModelsOfType("chat", providerId);
 		if (models.length === 0) {
 			ctx.ui.notify(`No models known for ${providerId} yet; its catalog has not been fetched`, "info");
 			return this.manualModel(providerId, ctx);
 		}
-		const labels = new Map(models.map((model) => [`${model.id} — ${model.name}`, model.id]));
-		const choice = await ctx.ui.select("Model", [...labels.keys(), ProviderSettingsCommand.MANUAL]);
-		if (choice === undefined) {
-			return undefined;
+		const entries = models.map((model) => ({
+			item: { value: model.id, label: model.id, description: model.name },
+			search: ProviderSettingsCommand.searchText(providerId, model.id, model.name),
+		}));
+		let cursor = selected;
+		for (;;) {
+			const choice = await dialogs.pick("Model", entries, [ProviderSettingsCommand.MANUAL_ITEM], true, cursor);
+			if (choice === undefined) {
+				return undefined;
+			}
+			if (choice !== ProviderSettingsCommand.MANUAL_VALUE) {
+				return choice;
+			}
+			const manual = await this.manualModel(providerId, ctx);
+			if (manual !== undefined) {
+				return manual;
+			}
+			cursor = undefined;
 		}
-		if (choice === ProviderSettingsCommand.MANUAL) {
-			return this.manualModel(providerId, ctx);
-		}
-		return labels.get(choice);
 	}
 
 	private async manualModel(providerId: string, ctx: ExtensionCommandContext): Promise<string | undefined> {
@@ -126,13 +154,54 @@ export class ProviderSettingsCommand {
 		return modelId;
 	}
 
-	private async edit(providerId: string, entry: ProviderEntry, modelId: string, ctx: ExtensionCommandContext): Promise<void> {
-		const choice = await ctx.ui.select("Field", ProviderSettingsCommand.FIELDS.map((field) => field.label));
-		const field = ProviderSettingsCommand.FIELDS.find((candidate) => candidate.label === choice);
-		if (!field) {
+	/** Every field of the model with the value it currently resolves to, plus the whole override row. */
+	private rows(providerId: string, modelId: string, ctx: ExtensionCommandContext): SettingRow[] {
+		const override = this.override(providerId, modelId);
+		const rows = ProviderSettingsCommand.FIELDS.map((field) => {
+			const stored = ProviderSettingsCommand.at(override, field.path) !== undefined;
+			const choices = [...ProviderSettingsCommand.choices(field), ...(stored ? [ProviderSettingsCommand.CLEAR_FIELD] : [])];
+			return {
+				label: field.label,
+				value: this.display(field, providerId, modelId, ctx),
+				description: stored ? ProviderSettingsCommand.OVERRIDDEN : ProviderSettingsCommand.CATALOG,
+				choices,
+			};
+		});
+		const count = Object.keys(override).length;
+		rows.push({
+			label: ProviderSettingsCommand.OVERRIDE,
+			value: count === 0 ? ProviderSettingsCommand.UNSET : `${count} ${count === 1 ? "field" : "fields"}`,
+			description: ProviderSettingsCommand.OVERRIDE_HINT,
+			choices: [ProviderSettingsCommand.CLEAR],
+		});
+		return rows;
+	}
+
+	/** The field screen stays open on the row it was left on, whatever the chosen value did. */
+	private async changeField(providerId: string, modelId: string, dialogs: SettingsDialogs, ctx: ExtensionCommandContext, selected: string | undefined): Promise<string | undefined> {
+		const rows = this.rows(providerId, modelId, ctx);
+		const answer = await dialogs.settings(`${providerId} / ${modelId}`, rows, selected);
+		if (answer === undefined) {
+			return undefined;
+		}
+		await this.apply(answer.label, answer.choice, providerId, modelId, dialogs, ctx);
+		return answer.label;
+	}
+
+	private async apply(label: string, choice: string, providerId: string, modelId: string, dialogs: SettingsDialogs, ctx: ExtensionCommandContext): Promise<void> {
+		if (label === ProviderSettingsCommand.OVERRIDE) {
+			this.commit(providerId, modelId, {}, ctx, `Cleared the override for ${modelId}`);
 			return;
 		}
-		const value = await this.value(field, providerId, modelId, ctx);
+		const field = ProviderSettingsCommand.FIELDS.find((candidate) => candidate.label === label);
+		if (field === undefined) {
+			return;
+		}
+		if (choice === ProviderSettingsCommand.CLEAR_FIELD) {
+			this.commit(providerId, modelId, ProviderSettingsCommand.without(this.override(providerId, modelId), field.path), ctx, `Cleared ${field.label} for ${modelId}`);
+			return;
+		}
+		const value = await this.value(field, choice, providerId, modelId, dialogs, ctx);
 		if (value === null) {
 			return;
 		}
@@ -140,42 +209,21 @@ export class ProviderSettingsCommand {
 			ctx.ui.notify(`${field.label} expects ${ProviderSettingsCommand.expectation(field)}`, "warning");
 			return;
 		}
-		const next = this.assign(this.override(providerId, modelId), field, value);
-		if (this.save(providerId, entry, modelId, next, ctx)) {
-			ctx.ui.notify(`Saved ${field.label} for ${modelId}; open /model to apply`, "info");
-		}
+		this.commit(providerId, modelId, this.assign(this.override(providerId, modelId), field, value), ctx, `Saved ${field.label} for ${modelId}`);
 	}
 
-	private async clearField(providerId: string, entry: ProviderEntry, modelId: string, ctx: ExtensionCommandContext): Promise<void> {
-		const override = this.override(providerId, modelId);
-		const fields = ProviderSettingsCommand.FIELDS.filter((field) => ProviderSettingsCommand.at(override, field.path) !== undefined);
-		if (fields.length === 0) {
-			ctx.ui.notify(`${modelId} has no override to clear; edit one first`, "info");
-			return;
-		}
-		const choice = await ctx.ui.select("Field to clear", fields.map((field) => field.label));
-		const field = fields.find((candidate) => candidate.label === choice);
-		if (!field) {
-			return;
-		}
-		if (this.save(providerId, entry, modelId, ProviderSettingsCommand.without(override, field.path), ctx)) {
-			ctx.ui.notify(`Cleared ${field.label} for ${modelId}; open /model to apply`, "info");
-		}
-	}
-
-	private async value(field: EditableField, providerId: string, modelId: string, ctx: ExtensionCommandContext): Promise<unknown> {
+	/** The value the chosen option stands for; null steps back and undefined is input that cannot be stored. */
+	private async value(field: EditableField, choice: string, providerId: string, modelId: string, dialogs: SettingsDialogs, ctx: ExtensionCommandContext): Promise<unknown> {
 		if (field.kind === "fallback") {
-			return this.chooseFallback(ctx);
+			return this.chooseFallback(dialogs, ctx);
 		}
-		const current = this.current(field, providerId, modelId, ctx);
 		if (field.kind === "boolean") {
-			const choice = await ctx.ui.select(`${field.label} (current: ${current})`, ["true", "false"]);
-			return choice === undefined ? null : choice === "true";
+			return choice === "true";
 		}
 		if (field.kind === "modalities") {
-			const choice = await ctx.ui.select(`${field.label} (current: ${current})`, [...ProviderSettingsCommand.MODALITIES.keys()]);
-			return choice === undefined ? null : ProviderSettingsCommand.MODALITIES.get(choice);
+			return ProviderSettingsCommand.MODALITIES.get(choice);
 		}
+		const current = this.current(field, providerId, modelId, ctx);
 		const answer = (await ctx.ui.input(`${field.label}${current === "" ? "" : ` (current: ${current})`}`))?.trim();
 		if (answer === undefined) {
 			return null;
@@ -193,33 +241,68 @@ export class ProviderSettingsCommand {
 		return /^\d+(?:\.\d+)?$/.test(answer) && Number.isFinite(number) ? number : undefined;
 	}
 
-	private static parse(answer: string): unknown {
-		try {
-			return JSON.parse(answer);
-		} catch {
-			return undefined;
+	private static choices(field: EditableField): string[] {
+		if (field.kind === "boolean") {
+			return ["true", "false"];
 		}
+		if (field.kind === "modalities") {
+			return [...ProviderSettingsCommand.MODALITIES.keys()];
+		}
+		if (field.kind === "fallback") {
+			return [ProviderSettingsCommand.CHOOSE_FALLBACK];
+		}
+		return [ProviderSettingsCommand.EDIT_VALUE];
 	}
 
 	/** Only a chat model with credentials can serve the turn, so only its provider is offered. */
-	private async chooseFallback(ctx: ExtensionCommandContext): Promise<ModelFallback | null> {
+	private async chooseFallback(dialogs: SettingsDialogs, ctx: ExtensionCommandContext): Promise<ModelFallback | null> {
 		const available = await ctx.modelRegistry.getAvailableOfType("chat");
 		const providers = [...new Set(available.map((model) => model.provider))];
 		if (providers.length === 0) {
 			ctx.ui.notify("No provider with credentials has a chat model to fall back to", "warning");
 			return null;
 		}
-		const labels = new Map(providers.map((id) => [`${id} ${ctx.modelRegistry.getProviderDisplayName(id)}`, id]));
-		const choice = await ctx.ui.select("Fallback provider", [...labels.keys()]);
-		if (choice === undefined) {
-			return null;
+		const entries = providers.map((id) => {
+			const name = ctx.modelRegistry.getProviderDisplayName(id);
+			return { item: { value: id, label: id, description: name }, search: `${id} ${name}` };
+		});
+		let cursor: string | undefined;
+		for (;;) {
+			const provider = await dialogs.pick("Fallback provider", entries, [], false, cursor);
+			if (provider === undefined) {
+				return null;
+			}
+			const model = await this.chooseModel(provider, dialogs, ctx);
+			if (model !== undefined) {
+				return { provider, model };
+			}
+			cursor = provider;
 		}
-		const provider = labels.get(choice);
-		if (provider === undefined) {
-			return null;
+	}
+
+	/** The text `/model` searches, which pi keeps inside its own selector. */
+	private static searchText(provider: string, id: string, name: string | undefined): string {
+		return `${provider} ${provider}/${id} ${provider} ${id}${name === undefined ? "" : ` ${name}`}`;
+	}
+
+	/** What the field currently resolves to, for the row that shows it. */
+	private display(field: EditableField, providerId: string, modelId: string, ctx: ExtensionCommandContext): string {
+		const stored = ProviderSettingsCommand.at(this.override(providerId, modelId), field.path);
+		const value = stored !== undefined ? stored : ProviderSettingsCommand.at(ctx.modelRegistry.getModelOfType("chat", providerId, modelId), field.path);
+		if (value === undefined) {
+			return ProviderSettingsCommand.UNSET;
 		}
-		const model = await this.chooseModel(provider, ctx);
-		return model === undefined ? null : { provider, model };
+		if (field.kind === "fallback" && typeof value === "object" && value !== null) {
+			const fallback = value as ModelFallback;
+			return `${fallback.provider}/${fallback.model}`;
+		}
+		if (field.kind === "modalities" && Array.isArray(value)) {
+			return value.join(", ");
+		}
+		if (field.kind === "text") {
+			return String(value).replace(/\s+/g, " ");
+		}
+		return typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
 	}
 
 	/** The override value when one is set, else the registry's effective value. */
@@ -233,6 +316,14 @@ export class ProviderSettingsCommand {
 			return value.join(", ");
 		}
 		return typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+	}
+
+	private static parse(answer: string): unknown {
+		try {
+			return JSON.parse(answer);
+		} catch {
+			return undefined;
+		}
 	}
 
 	private static expectation(field: EditableField): string {
@@ -249,16 +340,6 @@ export class ProviderSettingsCommand {
 			return "valid JSON";
 		}
 		return "a non-empty string";
-	}
-
-	private clear(providerId: string, entry: ProviderEntry, modelId: string, ctx: ExtensionCommandContext): void {
-		if (this.save(providerId, entry, modelId, {}, ctx)) {
-			ctx.ui.notify(`Cleared the override for ${modelId}; open /model to apply`, "info");
-		}
-	}
-
-	private override(providerId: string, modelId: string): ModelOverride {
-		return { ...(this.store.all()[providerId]?.modelOverrides?.[modelId] ?? {}) };
 	}
 
 	private static at(source: unknown, path: readonly string[]): unknown {
@@ -300,9 +381,20 @@ export class ProviderSettingsCommand {
 		return next as ModelOverride;
 	}
 
+	private override(providerId: string, modelId: string): ModelOverride {
+		return { ...(this.store.all()[providerId]?.modelOverrides?.[modelId] ?? {}) };
+	}
+
+	private commit(providerId: string, modelId: string, next: ModelOverride, ctx: ExtensionCommandContext, message: string): void {
+		if (this.save(providerId, modelId, next, ctx)) {
+			ctx.ui.notify(`${message}; open /model to apply`, "info");
+		}
+	}
+
 	/** An override left empty is dropped, and an empty override map leaves the provider file. */
-	private save(providerId: string, entry: ProviderEntry, modelId: string, next: ModelOverride, ctx: ExtensionCommandContext): boolean {
-		if (!this.valid(modelId, next, ctx)) {
+	private save(providerId: string, modelId: string, next: ModelOverride, ctx: ExtensionCommandContext): boolean {
+		const entry = this.store.all()[providerId];
+		if (entry === undefined || !this.valid(modelId, next, ctx)) {
 			return false;
 		}
 		const overrides: ModelOverrides = { ...(entry.modelOverrides ?? {}) };
