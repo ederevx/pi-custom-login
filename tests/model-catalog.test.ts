@@ -651,6 +651,9 @@ for (const [description, override] of [
 	["a non-object sampling params level", { samplingParamsByThinkingLevel: { high: "top_p" } }],
 	["a negative prompt cache lifetime", { promptCache: { short: -1 } }],
 	["a non-object compat", { compat: "fast" }],
+	["a fallback without a model", { fallback: { provider: "other" } }],
+	["a blank fallback provider", { fallback: { provider: " ", model: "b" } }],
+	["a fallback with an extra key", { fallback: { provider: "other", model: "b", api: "x" } }],
 ] as Array<[string, unknown]>) {
 	test(`an override with ${description} rejects before any request`, async () => {
 		respondWith({ data: [{ id: "m" }] });
@@ -660,3 +663,14 @@ for (const [description, override] of [
 		assertEq(capture.persisted, undefined);
 	});
 }
+
+test("a fallback is stored for the failover and never reaches the model", async () => {
+	respondWith({ data: [{ id: "m" }] });
+	const entry: ProviderEntry = {
+		baseUrl: "https://code.verboo.ai/router/v1",
+		modelOverrides: { m: { fallback: { provider: "other", model: "b" } } },
+	};
+	const model = (await new ModelCatalog(entry).models(networked()))[0] as unknown as Record<string, unknown>;
+	assertEq("fallback" in model, false);
+	assertEq(JSON.stringify(entry.modelOverrides?.m.fallback), JSON.stringify({ provider: "other", model: "b" }));
+});

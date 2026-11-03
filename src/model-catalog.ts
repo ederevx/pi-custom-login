@@ -91,6 +91,10 @@ export class ModelCatalog {
 			}
 			const merged: Record<string, unknown> = { ...model };
 			for (const [key, value] of Object.entries(override)) {
+				// The fallback is a choice this extension makes at send time, not a field pi knows.
+				if (key === "fallback") {
+					continue;
+				}
 				merged[key] = ModelCatalog.MERGED.has(key) ? { ...(merged[key] as object | undefined), ...(value as object) } : value;
 			}
 			return merged as RefreshedModels[number];

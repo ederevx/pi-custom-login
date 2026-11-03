@@ -2,14 +2,15 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
+import { FallbackChain } from "./fallback-chain.ts";
 import { ModelOverrideRules } from "./model-override-rules.ts";
-import { COMMAND_NAME_SETTINGS, type ModelOverride, type ModelOverrides, type ProviderEntry } from "./provider-config.ts";
+import { COMMAND_NAME_SETTINGS, type ModelFallback, type ModelOverride, type ModelOverrides, type ProviderEntry } from "./provider-config.ts";
 import { ProviderRegistry } from "./provider-registry.ts";
 import { ProviderStore } from "./provider-store.ts";
 
 interface EditableField {
 	readonly label: string;
-	readonly kind: "text" | "boolean" | "limit" | "cost" | "modalities" | "json";
+	readonly kind: "text" | "boolean" | "limit" | "cost" | "modalities" | "json" | "fallback";
 	readonly path: readonly string[];
 }
 
@@ -33,6 +34,7 @@ export class ProviderSettingsCommand {
 		{ label: "samplingParamsByThinkingLevel", kind: "json", path: ["samplingParamsByThinkingLevel"] },
 		{ label: "headers", kind: "json", path: ["headers"] },
 		{ label: "compat", kind: "json", path: ["compat"] },
+		{ label: "fallback", kind: "fallback", path: ["fallback"] },
 	];
 	private static readonly MODALITIES = new Map([["text", ["text"]], ["text, image", ["text", "image"]]]);
 
@@ -162,6 +164,9 @@ export class ProviderSettingsCommand {
 	}
 
 	private async value(field: EditableField, providerId: string, modelId: string, ctx: ExtensionCommandContext): Promise<unknown> {
+		if (field.kind === "fallback") {
+			return this.chooseFallback(ctx);
+		}
 		const current = this.current(field, providerId, modelId, ctx);
 		if (field.kind === "boolean") {
 			const choice = await ctx.ui.select(`${field.label} (current: ${current})`, ["true", "false"]);
@@ -194,6 +199,22 @@ export class ProviderSettingsCommand {
 		} catch {
 			return undefined;
 		}
+	}
+
+	/** Only a model with credentials can serve the turn, so only its provider is offered. */
+	private async chooseFallback(ctx: ExtensionCommandContext): Promise<ModelFallback | null> {
+		const providers = [...new Set(ctx.modelRegistry.getAvailable().map((model) => model.provider))];
+		const labels = new Map(providers.map((id) => [`${id} ${ctx.modelRegistry.getProviderDisplayName(id)}`, id]));
+		const choice = await ctx.ui.select("Fallback provider", [...labels.keys()]);
+		if (choice === undefined) {
+			return null;
+		}
+		const provider = labels.get(choice);
+		if (provider === undefined) {
+			return null;
+		}
+		const model = await this.chooseModel(provider, ctx);
+		return model === undefined ? null : { provider, model };
 	}
 
 	/** The override value when one is set, else the registry's effective value. */
@@ -287,6 +308,10 @@ export class ProviderSettingsCommand {
 			delete updated.modelOverrides;
 		} else {
 			updated.modelOverrides = overrides;
+		}
+		if (new FallbackChain({ ...this.store.all(), [providerId]: updated }).loops(providerId, modelId)) {
+			ctx.ui.notify(`${modelId} cannot fall back to a model that already falls back to it`, "warning");
+			return false;
 		}
 		this.store.add(providerId, updated);
 		this.registry.replace(providerId, updated);

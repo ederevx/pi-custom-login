@@ -1,4 +1,5 @@
 import { FakeCommandContext, FakePi, assertEq, scratchDir, test } from "./harness.ts";
+import { ModelFailover } from "../src/model-failover.ts";
 import { ProviderRegistry } from "../src/provider-registry.ts";
 import { ProviderSettingsCommand } from "../src/provider-settings-command.ts";
 import { ProviderStore } from "../src/provider-store.ts";
@@ -21,7 +22,7 @@ const GLM_MODEL = {
 function subject(name: string): { pi: FakePi; store: ProviderStore } {
 	const pi = new FakePi();
 	const store = new ProviderStore(`${scratchDir()}/${name}`);
-	new ProviderSettingsCommand(pi.extension(), store, new ProviderRegistry(pi.extension())).register();
+	new ProviderSettingsCommand(pi.extension(), store, new ProviderRegistry(pi.extension(), new ModelFailover(pi.extension(), store))).register();
 	return { pi, store };
 }
 
@@ -136,6 +137,7 @@ test("the field list follows pi's documented order", async () => {
 		"samplingParamsByThinkingLevel",
 		"headers",
 		"compat",
+		"fallback",
 	]));
 });
 
@@ -199,4 +201,42 @@ test("a JSON prompt shows the registry's effective value", async () => {
 	const ctx = new FakeCommandContext([undefined], [VERBOO, GLM, EDIT, "compat"], { verboo: [model] });
 	await pi.command("providers-settings", "", ctx);
 	assertEq(ctx.prompts.at(-1), 'compat (current: {"supportsDeveloperRole":false})');
+});
+
+const OTHER = "other https://other.test/v1";
+
+test("the fallback picker lists providers with a model and saves the pair", async () => {
+	const { pi, store } = registered("settings-fallback", {
+		baseUrl: "https://code.verboo.ai/router/v1",
+	});
+	const other = { id: "m2", name: "M2", reasoning: false, contextWindow: 4096, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+	const ctx = new FakeCommandContext([], [VERBOO, GLM, EDIT, "fallback", "other other", "m2 — M2"], { verboo: [GLM_MODEL], other: [other] });
+	store.add("other", { baseUrl: "https://other.test/v1" });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(JSON.stringify(store.all().verboo.modelOverrides?.["glm-5.2"]?.fallback), JSON.stringify({ provider: "other", model: "m2" }));
+	assertEq(ctx.offers.some((options) => options.includes(OTHER)), true);
+});
+
+test("a fallback to the model itself is refused", async () => {
+	const { pi, store } = registered("settings-fallback-self");
+	const ctx = new FakeCommandContext([], [VERBOO, GLM, EDIT, "fallback", "verboo verboo", GLM], { verboo: [GLM_MODEL] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(store.all().verboo.modelOverrides, undefined);
+	assertEq(ctx.lastMessage, "glm-5.2 cannot fall back to a model that already falls back to it");
+});
+
+test("a fallback that closes a cycle is refused", async () => {
+	const { pi, store } = registered("settings-fallback-cycle", {
+		baseUrl: "https://code.verboo.ai/router/v1",
+		modelOverrides: { "glm-5.2": { contextWindow: 262144 } },
+	});
+	store.add("other", {
+		baseUrl: "https://other.test/v1",
+		modelOverrides: { m2: { fallback: { provider: "verboo", model: "glm-5.2" } } },
+	});
+	const other = { id: "m2", name: "M2", reasoning: false, contextWindow: 4096, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+	const ctx = new FakeCommandContext([], [VERBOO, GLM, EDIT, "fallback", "other other", "m2 — M2"], { verboo: [GLM_MODEL], other: [other] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(JSON.stringify(store.all().verboo.modelOverrides?.["glm-5.2"]), JSON.stringify({ contextWindow: 262144 }));
+	assertEq(ctx.lastMessage.includes("already falls back to it"), true);
 });

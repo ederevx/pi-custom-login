@@ -62,6 +62,23 @@ next time the model list refreshes (open `/model` or restart).
 These overrides sit below pi's own `models.json` layer: a value in
 `providers.<provider-id>.modelOverrides.<exact-model-id>` there still wins.
 
+## Fall back when a provider fails
+
+`/providers-settings` can name a `fallback` model for any model it edits, chosen
+from a provider whose model already has credentials. When a request to the
+model ends in a provider error before anything was streamed, the fallback serves
+that turn instead: the failed attempt contributes nothing, and the answer names
+the model that actually responded. Nothing else fails over — a cancel, a normal
+finish, a context overflow (pi compacts instead), an error after content has
+been streamed, and a provider that is merely slow all pass through unchanged.
+
+Every failover is announced once it happens, naming both models and what the
+served turn cost, so no reply is silently billed to a provider you did not
+choose. Fallbacks chain: when the fallback fails too, its own fallback applies.
+A model may not fall back to itself or to a chain that returns to it —
+`/providers-settings` refuses such a pair, and the failover refuses one found in
+the file rather than retrying forever.
+
 ## How the model list is built
 
 Every registered provider is an `openai-completions` provider with
@@ -131,6 +148,9 @@ extension from loading.
 - A model's `api` and `baseUrl` are not overridable here: the key this provider
   stores is only sent to the endpoint registered with `/providers add`. Register
   the other endpoint as its own provider instead.
+- A fallback only replaces an attempt that failed before streaming anything, so
+  a partially streamed reply is never repeated on another model, and a slow
+  provider is never abandoned: request timeouts stay pi's own.
 - Every catalog model is built with `compat.supportsDeveloperRole: false`, so
   instructions go out as the standard `system` role rather than the
   OpenAI-specific `developer` role that pi otherwise guesses for an unknown

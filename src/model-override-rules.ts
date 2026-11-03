@@ -17,6 +17,7 @@ export class ModelOverrideRules {
 		"samplingParamsByThinkingLevel",
 		"headers",
 		"compat",
+		"fallback",
 	]);
 	private static readonly COST_FIELDS = new Set(["input", "output", "cacheRead", "cacheWrite", "tiers"]);
 	private static readonly TIER_FIELDS = ["inputTokensAbove", "input", "output", "cacheRead", "cacheWrite"];
@@ -73,6 +74,25 @@ export class ModelOverrideRules {
 		}
 		if (fields.compat !== undefined) {
 			this.record(fields.compat, `modelOverrides.${id}.compat`);
+		}
+		this.fallback(fields.fallback, `modelOverrides.${id}.fallback`);
+	}
+
+	/** Self-references and cycles need the other providers' overrides, so `FallbackChain` owns them. */
+	private fallback(value: unknown, field: string): void {
+		if (value === undefined) {
+			return;
+		}
+		const fallback = this.record(value, field);
+		for (const key of Object.keys(fallback)) {
+			if (key !== "provider" && key !== "model") {
+				throw this.failure(`has an unknown ${field}.${key}`);
+			}
+		}
+		for (const key of ["provider", "model"]) {
+			if (typeof fallback[key] !== "string" || (fallback[key] as string).trim() === "") {
+				throw this.failure(`has an invalid ${field}.${key}`);
+			}
 		}
 	}
 
