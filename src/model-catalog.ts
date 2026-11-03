@@ -2,12 +2,21 @@
 
 import { CatalogEntry } from "./catalog-entry.ts";
 import { CatalogMetadata } from "./catalog-metadata.ts";
-import type { CatalogRefreshContext, ModelOverride, ProviderEntry, RefreshedModels } from "./provider-config.ts";
+import { ModelOverrideRules } from "./model-override-rules.ts";
+import type { CatalogRefreshContext, ProviderEntry, RefreshedModels } from "./provider-config.ts";
 
 export class ModelCatalog {
-	/** The only override keys the catalog recognizes; anything else is a stored mistake. */
-	private static readonly FIELDS = new Set(["name", "reasoning", "contextWindow", "maxTokens", "cost"]);
-	private static readonly COST_FIELDS = new Set(["input", "output", "cacheRead", "cacheWrite"]);
+	/** Override keys pi merges field by field over the model's value instead of replacing it. */
+	private static readonly MERGED = new Set([
+		"cost",
+		"compat",
+		"inputLimits",
+		"promptCache",
+		"samplingParams",
+		"samplingParamsByThinkingLevel",
+		"headers",
+		"thinkingLevelMap",
+	]);
 
 	private readonly entry: ProviderEntry;
 
@@ -69,7 +78,7 @@ export class ModelCatalog {
 		return new Error(`${this.label()}: model catalog ${problem}`);
 	}
 
-	/** Overrides sit below pi's models.json modelOverrides and re-derive only fields the catalog supplied. */
+	/** Overrides sit below pi's models.json modelOverrides and set any field of the model. */
 	private applyOverrides(models: RefreshedModels): RefreshedModels {
 		const overrides = this.entry.modelOverrides;
 		if (!overrides) {
@@ -80,22 +89,11 @@ export class ModelCatalog {
 			if (!override) {
 				return model;
 			}
-			const cost = override.cost && model.cost
-				? {
-					input: override.cost.input ?? model.cost.input,
-					output: override.cost.output ?? model.cost.output,
-					cacheRead: override.cost.cacheRead ?? model.cost.cacheRead,
-					cacheWrite: override.cost.cacheWrite ?? model.cost.cacheWrite,
-				}
-				: model.cost;
-			return {
-				...model,
-				...(override.name !== undefined ? { name: override.name } : {}),
-				...(override.reasoning !== undefined ? { reasoning: override.reasoning } : {}),
-				...(override.contextWindow !== undefined ? { contextWindow: override.contextWindow } : {}),
-				...(override.maxTokens !== undefined ? { maxTokens: override.maxTokens } : {}),
-				...(override.cost !== undefined ? { cost } : {}),
-			};
+			const merged: Record<string, unknown> = { ...model };
+			for (const [key, value] of Object.entries(override)) {
+				merged[key] = ModelCatalog.MERGED.has(key) ? { ...(merged[key] as object | undefined), ...(value as object) } : value;
+			}
+			return merged as RefreshedModels[number];
 		});
 	}
 
@@ -105,61 +103,9 @@ export class ModelCatalog {
 		if (!overrides) {
 			return;
 		}
+		const rules = new ModelOverrideRules((problem) => this.failure(problem));
 		for (const [id, override] of Object.entries(overrides)) {
-			this.validateOverride(id, override);
-		}
-	}
-
-	private validateOverride(id: string, override: ModelOverride): void {
-		if (typeof override !== "object" || override === null || Array.isArray(override)) {
-			throw this.failure(`has an invalid modelOverrides.${id}`);
-		}
-		for (const key of Object.keys(override)) {
-			if (!ModelCatalog.FIELDS.has(key)) {
-				throw this.failure(`has an unknown modelOverrides.${id}.${key}`);
-			}
-		}
-		if (override.name !== undefined && (typeof override.name !== "string" || override.name.trim() === "")) {
-			throw this.failure(`has an invalid modelOverrides.${id}.name`);
-		}
-		if (override.reasoning !== undefined && typeof override.reasoning !== "boolean") {
-			throw this.failure(`has an invalid modelOverrides.${id}.reasoning`);
-		}
-		if (override.contextWindow !== undefined) {
-			this.limit(override.contextWindow, `modelOverrides.${id}.contextWindow`);
-		}
-		if (override.maxTokens !== undefined) {
-			this.limit(override.maxTokens, `modelOverrides.${id}.maxTokens`);
-		}
-		if (override.cost !== undefined) {
-			if (typeof override.cost !== "object" || override.cost === null || Array.isArray(override.cost)) {
-				throw this.failure(`has an invalid modelOverrides.${id}.cost`);
-			}
-			for (const key of Object.keys(override.cost)) {
-				if (!ModelCatalog.COST_FIELDS.has(key)) {
-					throw this.failure(`has an unknown modelOverrides.${id}.cost.${key}`);
-				}
-			}
-			this.validateCost(override.cost.input, `modelOverrides.${id}.cost.input`);
-			this.validateCost(override.cost.output, `modelOverrides.${id}.cost.output`);
-			this.validateCost(override.cost.cacheRead, `modelOverrides.${id}.cost.cacheRead`);
-			this.validateCost(override.cost.cacheWrite, `modelOverrides.${id}.cost.cacheWrite`);
-		}
-	}
-
-	private limit(value: unknown, field: string): number {
-		if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
-			throw this.failure(`has an invalid ${field}`);
-		}
-		return value;
-	}
-
-	private validateCost(value: unknown, field: string): void {
-		if (value === undefined) {
-			return;
-		}
-		if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-			throw this.failure(`has an invalid ${field}`);
+			rules.validate(id, override);
 		}
 	}
 }

@@ -573,6 +573,55 @@ test("an override for a model the catalog does not list changes nothing", async 
 	assertEq(JSON.stringify(models.map((model) => model.contextWindow)), JSON.stringify([DEFAULT_CONTEXT_WINDOW]));
 });
 
+test("an override sets every field pi publishes", async () => {
+	respondWith({ data: [{ id: "m" }] });
+	const entry: ProviderEntry = {
+		baseUrl: "https://code.verboo.ai/router/v1",
+		modelOverrides: {
+			m: {
+				input: ["text", "image"],
+				inputLimits: { maxRequestBytes: 1000, images: { resize: { maxWidth: 800 }, maxPerRequest: 3 } },
+				promptCache: { short: 300, long: 3600 },
+				samplingParams: { top_p: 0.9 },
+				samplingParamsByThinkingLevel: { high: { temperature: 0.2 } },
+				thinkingLevelMap: { off: null, high: "high" },
+				headers: { "X-Tier": "fast" },
+				compat: { supportsReasoningEffort: false },
+				cost: { tiers: [{ inputTokensAbove: 0, input: 1, output: 2, cacheRead: 0, cacheWrite: 0 }] },
+			},
+		},
+	};
+	const model = (await new ModelCatalog(entry).models(networked()))[0] as unknown as Record<string, unknown>;
+	assertEq(JSON.stringify(model.input), JSON.stringify(["text", "image"]));
+	assertEq(JSON.stringify(model.inputLimits), JSON.stringify({ maxRequestBytes: 1000, images: { resize: { maxWidth: 800 }, maxPerRequest: 3 } }));
+	assertEq(JSON.stringify(model.promptCache), JSON.stringify({ short: 300, long: 3600 }));
+	assertEq(JSON.stringify(model.samplingParams), JSON.stringify({ top_p: 0.9 }));
+	assertEq(JSON.stringify(model.samplingParamsByThinkingLevel), JSON.stringify({ high: { temperature: 0.2 } }));
+	assertEq(JSON.stringify(model.thinkingLevelMap), JSON.stringify({ off: null, high: "high" }));
+	assertEq(JSON.stringify(model.headers), JSON.stringify({ "X-Tier": "fast" }));
+	assertEq(JSON.stringify(model.cost), JSON.stringify({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, tiers: [{ inputTokensAbove: 0, input: 1, output: 2, cacheRead: 0, cacheWrite: 0 }] }));
+});
+
+test("an object override merges while an array replaces", async () => {
+	respondWith({ data: [{ id: "m", vision: true, pricing: { prompt: "0.000001", completion: "0.000002" } }] });
+	const entry: ProviderEntry = {
+		baseUrl: "https://code.verboo.ai/router/v1",
+		modelOverrides: { m: { input: ["text"], cost: { input: 5 } } },
+	};
+	const model = (await new ModelCatalog(entry).models(networked()))[0];
+	assertEq(JSON.stringify(model.input), JSON.stringify(["text"]));
+	assertEq(JSON.stringify(model.cost), JSON.stringify({ input: 5, output: 2, cacheRead: 0, cacheWrite: 0 }));
+});
+
+test("a compat override layers over the developer-role baseline", async () => {
+	respondWith({ data: [{ id: "m" }, { id: "n" }] });
+	const baseUrl = "https://code.verboo.ai/router/v1";
+	const layered = await new ModelCatalog({ baseUrl, modelOverrides: { m: { compat: { supportsReasoningEffort: false } } } }).models(networked());
+	assertEq(JSON.stringify(layered[0].compat), JSON.stringify({ supportsDeveloperRole: false, supportsReasoningEffort: false }));
+	const flipped = await new ModelCatalog({ baseUrl, modelOverrides: { n: { compat: { supportsDeveloperRole: true } } } }).models(networked());
+	assertEq(JSON.stringify(flipped[1].compat), JSON.stringify({ supportsDeveloperRole: true }));
+});
+
 for (const [description, override] of [
 	["a non-string name", { name: 7 }],
 	["a blank name", { name: "   " }],
@@ -585,6 +634,23 @@ for (const [description, override] of [
 	["an unknown cost key", { cost: { tax: 1 } }],
 	["a null override", null],
 	["a non-object cost", { cost: 5 }],
+	["an api key", { api: "anthropic-messages" }],
+	["a baseUrl key", { baseUrl: "https://example.test/v1" }],
+	["an input without text", { input: ["image"] }],
+	["an unknown modality", { input: ["text", "audio"] }],
+	["a duplicated modality", { input: ["text", "text"] }],
+	["a tier missing a price", { cost: { tiers: [{ inputTokensAbove: 0, input: 1, output: 1, cacheRead: 0 }] } }],
+	["a negative tier threshold", { cost: { tiers: [{ inputTokensAbove: -1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }] } }],
+	["a non-array tier list", { cost: { tiers: {} } }],
+	["an unknown input limit", { inputLimits: { maxOutputBytes: 1 } }],
+	["a zero image limit", { inputLimits: { images: { maxPerRequest: 0 } } }],
+	["an unknown resize limit", { inputLimits: { images: { resize: { maxDepth: 1 } } } }],
+	["a non-string header", { headers: { "X-Tier": 1 } }],
+	["a numeric thinking level", { thinkingLevelMap: { high: 2 } }],
+	["a non-object sampling params", { samplingParams: 5 }],
+	["a non-object sampling params level", { samplingParamsByThinkingLevel: { high: "top_p" } }],
+	["a negative prompt cache lifetime", { promptCache: { short: -1 } }],
+	["a non-object compat", { compat: "fast" }],
 ] as Array<[string, unknown]>) {
 	test(`an override with ${description} rejects before any request`, async () => {
 		respondWith({ data: [{ id: "m" }] });
