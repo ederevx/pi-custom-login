@@ -51,10 +51,13 @@ provider. Every field pi accepts for a model can be overridden:
 
 The edit is stored under the provider in `custom-providers.json` and applied on
 top of the catalog's own values on every refresh, online or offline; clearing a
-model's override returns it to the catalog's values. Object-valued fields merge
-field by field over the model, as they do in pi's own `modelOverrides`, while
-arrays and single values replace. Saved edits apply the next time the model
-list refreshes (open `/model` or restart).
+model's override returns it to the catalog's values. Each field is edited on
+its own: a single value or a JSON object is typed, `input` chooses between
+text-only and text-and-image, and "Clear a field" removes one stored value.
+An edit the catalog would reject is refused and nothing is written. Object-valued
+fields merge field by field over the model, as they do in pi's own
+`modelOverrides`, while arrays and single values replace. Saved edits apply the
+next time the model list refreshes (open `/model` or restart).
 
 These overrides sit below pi's own `models.json` layer: a value in
 `providers.<provider-id>.modelOverrides.<exact-model-id>` there still wins.
@@ -125,6 +128,9 @@ extension from loading.
   USD per million tokens. Omitted cost fields retain their existing values;
   unknown model ids are ignored. A `models.json` value overrides this
   package's override for the same field.
+- A model's `api` and `baseUrl` are not overridable here: the key this provider
+  stores is only sent to the endpoint registered with `/providers add`. Register
+  the other endpoint as its own provider instead.
 - Every catalog model is built with `compat.supportsDeveloperRole: false`, so
   instructions go out as the standard `system` role rather than the
   OpenAI-specific `developer` role that pi otherwise guesses for an unknown

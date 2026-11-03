@@ -6,6 +6,7 @@ import { ProviderStore } from "../src/provider-store.ts";
 const VERBOO = "verboo https://code.verboo.ai/router/v1";
 const GLM = "glm-5.2 — GLM 5.2";
 const EDIT = "Edit a field";
+const CLEAR_FIELD = "Clear a field";
 const CLEAR = "Clear this model's override";
 
 const GLM_MODEL = {
@@ -111,4 +112,91 @@ test("cancelling at the model list opens no prompt and records nothing", async (
 	await pi.command("providers-settings", "", ctx);
 	assertEq(JSON.stringify(ctx.notifications), "[]");
 	assertEq(store.all().verboo.modelOverrides, undefined);
+});
+
+test("the field list follows pi's documented order", async () => {
+	const { pi } = registered("settings-fields");
+	const ctx = new FakeCommandContext([], [VERBOO, GLM, EDIT], { verboo: [GLM_MODEL] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(JSON.stringify(ctx.offers.at(-1)), JSON.stringify([
+		"name",
+		"reasoning",
+		"thinkingLevelMap",
+		"input",
+		"inputLimits",
+		"cost.input",
+		"cost.output",
+		"cost.cacheRead",
+		"cost.cacheWrite",
+		"cost.tiers",
+		"promptCache",
+		"contextWindow",
+		"maxTokens",
+		"samplingParams",
+		"samplingParamsByThinkingLevel",
+		"headers",
+		"compat",
+	]));
+});
+
+test("a JSON field saves the parsed object", async () => {
+	const { pi, store } = registered("settings-json");
+	const ctx = new FakeCommandContext(['{"X-Tier":"fast"}'], [VERBOO, GLM, EDIT, "headers"], { verboo: [GLM_MODEL] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(JSON.stringify(store.all().verboo.modelOverrides?.["glm-5.2"]?.headers), JSON.stringify({ "X-Tier": "fast" }));
+});
+
+test("invalid JSON warns and records nothing", async () => {
+	const { pi, store } = registered("settings-json-invalid");
+	const ctx = new FakeCommandContext(["{oops"], [VERBOO, GLM, EDIT, "headers"], { verboo: [GLM_MODEL] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(store.all().verboo.modelOverrides, undefined);
+	assertEq(ctx.lastMessage, "headers expects valid JSON");
+});
+
+test("JSON in the wrong shape is refused by the catalog's rules", async () => {
+	const { pi, store } = registered("settings-json-shape");
+	const ctx = new FakeCommandContext(['{"X-Tier":1}'], [VERBOO, GLM, EDIT, "headers"], { verboo: [GLM_MODEL] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(store.all().verboo.modelOverrides, undefined);
+	assertEq(ctx.notifications.at(-1)?.type, "warning");
+	assertEq(ctx.lastMessage.includes("headers.X-Tier"), true);
+});
+
+test("the modality select saves the pi modalities", async () => {
+	const { pi, store } = registered("settings-input");
+	const ctx = new FakeCommandContext([], [VERBOO, GLM, EDIT, "input", "text, image"], { verboo: [GLM_MODEL] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(JSON.stringify(store.all().verboo.modelOverrides?.["glm-5.2"]?.input), JSON.stringify(["text", "image"]));
+});
+
+test("clearing one field keeps the rest of the override", async () => {
+	const { pi, store } = registered("settings-clear-field", {
+		baseUrl: "https://code.verboo.ai/router/v1",
+		modelOverrides: { "glm-5.2": { contextWindow: 262144, cost: { input: 5, output: 6 } } },
+	});
+	const ctx = new FakeCommandContext([], [VERBOO, GLM, CLEAR_FIELD, "cost.input"], { verboo: [GLM_MODEL] });
+	await pi.command("providers-settings", "", ctx);
+	const override = store.all().verboo.modelOverrides?.["glm-5.2"];
+	assertEq(override?.contextWindow, 262144);
+	assertEq(JSON.stringify(override?.cost), JSON.stringify({ output: 6 }));
+	assertEq(ctx.lastMessage, "Cleared cost.input for glm-5.2; open /model to apply");
+});
+
+test("clearing the last field drops the override", async () => {
+	const { pi, store } = registered("settings-clear-last", {
+		baseUrl: "https://code.verboo.ai/router/v1",
+		modelOverrides: { "glm-5.2": { contextWindow: 262144 } },
+	});
+	const ctx = new FakeCommandContext([], [VERBOO, GLM, CLEAR_FIELD, "contextWindow"], { verboo: [GLM_MODEL] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(store.all().verboo.modelOverrides, undefined);
+});
+
+test("a JSON prompt shows the registry's effective value", async () => {
+	const { pi } = registered("settings-current");
+	const model = { ...GLM_MODEL, compat: { supportsDeveloperRole: false } };
+	const ctx = new FakeCommandContext([undefined], [VERBOO, GLM, EDIT, "compat"], { verboo: [model] });
+	await pi.command("providers-settings", "", ctx);
+	assertEq(ctx.prompts.at(-1), 'compat (current: {"supportsDeveloperRole":false})');
 });
