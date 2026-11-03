@@ -13,7 +13,8 @@ pi install git:github.com/ederevx/pi-custom-login@v0.7.0
 ```
 
 The package has no runtime dependencies; it uses the host-provided
-`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`.
+`@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai` and
+`@earendil-works/pi-tui`.
 
 ## Register a provider
 
@@ -61,6 +62,26 @@ next time the model list refreshes (open `/model` or restart).
 
 These overrides sit below pi's own `models.json` layer: a value in
 `providers.<provider-id>.modelOverrides.<exact-model-id>` there still wins.
+
+## Fall back when a provider fails
+
+`/providers-settings` can name a `fallback` model for any model it edits, chosen
+from a provider whose model already has credentials. When a request to the
+model ends in a provider error before anything was streamed, the fallback serves
+that turn instead: the failed attempt contributes nothing, and the answer names
+the model that actually responded. Nothing else fails over — a cancel, a normal
+finish, a context overflow (pi compacts instead), and an error after content has
+been streamed all pass through unchanged. The extension adds no timer: when
+pi's own request timeout ends an attempt before anything streamed, that is a
+provider error and the fallback serves.
+
+Every failover is announced once it happens, naming both models and what the
+served turn cost, so no reply is silently billed to a provider you did not
+choose. Fallbacks chain: when the fallback fails too and is itself a provider
+of this extension, its own fallback applies. A model may not fall back to
+itself or to a chain that returns to it —
+`/providers-settings` refuses such a pair, and the failover refuses one found in
+the file rather than retrying forever.
 
 ## How the model list is built
 
@@ -131,6 +152,13 @@ extension from loading.
 - A model's `api` and `baseUrl` are not overridable here: the key this provider
   stores is only sent to the endpoint registered with `/providers add`. Register
   the other endpoint as its own provider instead.
+- A fallback only replaces an attempt that failed before streaming anything, so
+  a partially streamed reply is never repeated on another model. Timing out is
+  such a failure: the extension adds no timer of its own, and pi's request
+  timeout decides when an attempt ends.
+- The fallback graph is read from `custom-providers.json` on every request, so a
+  hand-edited file that no longer parses fails requests for these providers
+  until it is fixed.
 - Every catalog model is built with `compat.supportsDeveloperRole: false`, so
   instructions go out as the standard `system` role rather than the
   OpenAI-specific `developer` role that pi otherwise guesses for an unknown

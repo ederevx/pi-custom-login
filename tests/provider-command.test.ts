@@ -1,12 +1,13 @@
 import { FakeCommandContext, FakePi, assertEq, scratchDir, test } from "./harness.ts";
 import { ProviderCommand } from "../src/provider-command.ts";
+import { ModelFailover } from "../src/model-failover.ts";
 import { ProviderRegistry } from "../src/provider-registry.ts";
 import { ProviderStore } from "../src/provider-store.ts";
 
 function subject(name: string): { pi: FakePi; store: ProviderStore } {
 	const pi = new FakePi();
 	const store = new ProviderStore(`${scratchDir()}/${name}`);
-	new ProviderCommand(pi.extension(), store, new ProviderRegistry(pi.extension())).register();
+	new ProviderCommand(pi.extension(), store, new ProviderRegistry(pi.extension(), new ModelFailover(pi.extension(), store))).register();
 	return { pi, store };
 }
 
@@ -95,7 +96,7 @@ test("an unknown action prints the usage", async () => {
 test("re-adding an id keeps its model overrides", async () => {
 	const pi = new FakePi();
 	const store = new ProviderStore(`${scratchDir()}/command-readd-overrides`);
-	new ProviderCommand(pi.extension(), store, new ProviderRegistry(pi.extension())).register();
+	new ProviderCommand(pi.extension(), store, new ProviderRegistry(pi.extension(), new ModelFailover(pi.extension(), store))).register();
 	store.add("verboo", {
 		baseUrl: "https://old.example/v1",
 		modelOverrides: { "glm-5.2": { contextWindow: 262144 } },

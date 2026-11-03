@@ -17,6 +17,7 @@ import "./provider-store.test.ts";
 import "./model-catalog.test.ts";
 import "./provider-command.test.ts";
 import "./provider-settings-command.test.ts";
+import "./model-failover.test.ts";
 
 await registry.runAll();
 cleanupScratch();

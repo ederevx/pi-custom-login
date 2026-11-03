@@ -42,6 +42,12 @@ export class FallbackLimits {
 export const DEFAULT_CONTEXT_WINDOW = FallbackLimits.contextWindow();
 export const DEFAULT_MAX_TOKENS = FallbackLimits.maxTokens();
 
+/** The model that serves a request this model's provider failed. */
+export interface ModelFallback {
+	provider: string;
+	model: string;
+}
+
 /** A per-model override applied on top of the catalog's values for a provider. */
 export interface ModelOverride {
 	name?: string;
@@ -57,6 +63,8 @@ export interface ModelOverride {
 	samplingParamsByThinkingLevel?: ChatModelConfig["samplingParamsByThinkingLevel"];
 	headers?: ChatModelConfig["headers"];
 	compat?: ChatModelConfig["compat"];
+	/** The model that serves a request when this model's provider fails before answering. */
+	fallback?: ModelFallback;
 }
 
 /** Model id → override, stored beside the provider that owns the models. */

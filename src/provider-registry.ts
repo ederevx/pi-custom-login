@@ -4,12 +4,15 @@ import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-age
 
 import { DEFAULT_API, type ProviderEntry } from "./provider-config.ts";
 import { ModelCatalog } from "./model-catalog.ts";
+import { ModelFailover } from "./model-failover.ts";
 
 export class ProviderRegistry {
 	private readonly pi: ExtensionAPI;
+	private readonly failover: ModelFailover;
 
-	constructor(pi: ExtensionAPI) {
+	constructor(pi: ExtensionAPI, failover: ModelFailover) {
 		this.pi = pi;
+		this.failover = failover;
 	}
 
 	registerAll(providers: Record<string, ProviderEntry>): void {
@@ -38,6 +41,7 @@ export class ProviderRegistry {
 			name: entry.name ?? id,
 			baseUrl: entry.baseUrl,
 			api: DEFAULT_API,
+			streamSimple: (model, context, options) => this.failover.stream(model, context, options),
 			authHeader: true,
 			models: [],
 			refreshModels: (context) => catalog.models(context),

@@ -104,6 +104,21 @@ export class FakePi {
 	readonly providers = new Map<string, ProviderConfig>();
 	readonly commands = new Map<string, { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>();
 	readonly unregistered: string[] = [];
+	private readonly handlers = new Map<string, Array<(event: { type: string }, ctx: unknown) => void>>();
+
+	on(event: string, handler: (event: { type: string }, ctx: unknown) => void): () => void {
+		const handlers = this.handlers.get(event) ?? [];
+		handlers.push(handler);
+		this.handlers.set(event, handlers);
+		return () => {};
+	}
+
+	/** Delivers the event pi emits once its session context is bound. */
+	async sessionStart(ctx: unknown): Promise<void> {
+		for (const handler of this.handlers.get("session_start") ?? []) {
+			await handler({ type: "session_start" }, ctx);
+		}
+	}
 
 	registerProvider(id: string, config: ProviderConfig): void {
 		this.providers.set(id, config);
@@ -133,6 +148,7 @@ export class FakePi {
 export class FakeCommandContext {
 	readonly notifications: Array<{ message: string; type?: string }> = [];
 	readonly offers: string[][] = [];
+	readonly unavailable = new Set<string>();
 	readonly prompts: string[] = [];
 	private readonly answers: Array<string | undefined>;
 	private readonly selections: Array<string | undefined>;
@@ -158,6 +174,11 @@ export class FakeCommandContext {
 			(providerId === undefined ? [] : [...(this.knownModels.get(providerId) ?? [])]).map((model) => ({ provider: providerId, ...model })),
 		getModelOfType: (_type: string, providerId: string, modelId: string): unknown =>
 			this.knownModels.get(providerId)?.find((model) => model.id === modelId),
+		getAvailableOfType: async (_type: string): Promise<Array<{ provider: string }>> =>
+			[...this.knownModels]
+				.filter(([provider]) => !this.unavailable.has(provider))
+				.flatMap(([provider, models]) => models.map(() => ({ provider }))),
+		getProviderDisplayName: (providerId: string): string => providerId,
 	};
 
 	constructor(
