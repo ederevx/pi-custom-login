@@ -132,6 +132,8 @@ export class FakePi {
 /** A minimal stand-in for pi's ExtensionCommandContext. */
 export class FakeCommandContext {
 	readonly notifications: Array<{ message: string; type?: string }> = [];
+	readonly offers: string[][] = [];
+	readonly prompts: string[] = [];
 	private readonly answers: Array<string | undefined>;
 	private readonly selections: Array<string | undefined>;
 	private readonly knownModels: ReadonlyMap<string, Array<Record<string, unknown>>>;
@@ -140,8 +142,12 @@ export class FakeCommandContext {
 		notify: (message: string, type?: "info" | "warning" | "error"): void => {
 			this.notifications.push({ message, type });
 		},
-		input: async (): Promise<string | undefined> => this.answers.shift(),
+		input: async (title: string): Promise<string | undefined> => {
+			this.prompts.push(title);
+			return this.answers.shift();
+		},
 		select: async (_title: string, options: readonly string[]): Promise<string | undefined> => {
+			this.offers.push([...options]);
 			const choice = this.selections.shift();
 			return choice !== undefined && options.includes(choice) ? choice : undefined;
 		},
