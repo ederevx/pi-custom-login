@@ -82,6 +82,9 @@ class FakeSessionContext {
 	readonly registry = new Map<string, Record<string, unknown>>();
 	readonly unauthenticated = new Set<string>();
 	readonly scripts: unknown[][] = [];
+	/** Providers whose requests pi routes back through an extension's own stream hook. */
+	readonly routed = new Set<string>();
+	reenter: ((target: Record<string, unknown>, context: unknown, options?: Record<string, unknown>) => unknown) | undefined = undefined;
 
 	readonly ui = {
 		notify: (message: string, type?: "info" | "warning" | "error"): void => {
@@ -92,8 +95,11 @@ class FakeSessionContext {
 	readonly modelRegistry = {
 		find: (provider: string, id: string): unknown => this.registry.get(`${provider}/${id}`),
 		hasConfiguredAuth: (target: { provider: string; id: string }): boolean => !this.unauthenticated.has(`${target.provider}/${target.id}`),
-		streamSimple: (target: Record<string, unknown>, _context: unknown, options?: Record<string, unknown>): unknown => {
+		streamSimple: (target: Record<string, unknown>, context: unknown, options?: Record<string, unknown>): unknown => {
 			this.served.push({ model: target, options });
+			if (this.reenter !== undefined && this.routed.has(target.provider as string)) {
+				return this.reenter(target, context, options);
+			}
 			return emit(this.scripts.shift() ?? []);
 		},
 	};
@@ -103,14 +109,14 @@ class FakeSessionContext {
 	}
 }
 
-async function forward(name: string, entry: Record<string, unknown>): Promise<{ ctx: FakeSessionContext; failover: ModelFailover }> {
+async function forward(name: string, entry: Record<string, unknown>): Promise<{ ctx: FakeSessionContext; failover: ModelFailover; pi: FakePi }> {
 	const pi = new FakePi();
 	const store = new ProviderStore(`${scratchDir()}/${name}`);
 	store.add("verboo", { baseUrl: BASE_URL, ...entry });
 	const failover = new ModelFailover(pi.extension(), store);
 	const ctx = new FakeSessionContext();
 	await pi.sessionStart(ctx);
-	return { ctx, failover };
+	return { ctx, failover, pi };
 }
 
 async function collect(stream: unknown): Promise<Array<Record<string, unknown>>> {
@@ -147,7 +153,7 @@ test("an attempt that fails before content is served by the fallback", async () 
 	assertEq(JSON.stringify(events.map((event) => event.type)), JSON.stringify(["start", "done"]));
 	assertEq((events[1].message as { provider: string; model: string }).provider, "other");
 	assertEq(ctx.notifications.length, 1);
-	assertEq(ctx.notifications[0].type, "warning");
+	assertEq(ctx.notifications[0].type, "info");
 	assertEq(ctx.lastMessage.includes("other/b"), true);
 	assertEq(ctx.lastMessage.includes("$0.500000"), true);
 });
@@ -317,3 +323,54 @@ test("the registered provider carries the API and the failover stream", () => {
 	assertEq(pi.providers.get("verboo")?.api, "openai-completions");
 	assertEq(typeof pi.providers.get("verboo")?.streamSimple, "function");
 });
+
+test("the announcement waits for the run to settle and arrives as a normal notice", async () => {
+	reset();
+	primary.push([start("verboo", "a"), failed("verboo", "a", "boom")]);
+	const { ctx, failover, pi } = await forward("failover-settled", { modelOverrides: { a: { fallback: { provider: "other", model: "b" } } } });
+	ctx.registry.set("other/b", model("other", "b"));
+	ctx.scripts.push([start("other", "b"), done("other", "b", 0.5)]);
+	await pi.emit("agent_start");
+	const events = await collect(failover.stream(model("verboo", "a") as never, {} as never, {}));
+	assertEq(events.at(-1)?.type, "done");
+	assertEq(ctx.notifications.length, 0, "nothing is announced while the run streams");
+	await pi.emit("agent_settled");
+	assertEq(ctx.notifications.length, 1);
+	assertEq(ctx.notifications[0].type, "info");
+	assertEq(ctx.notifications[0].message.includes("other/b served the turn"), true);
+});
+
+test("a chain is followed hop by hop and reported once per hop at settle", async () => {
+	reset();
+	primary.push([start("verboo", "a"), failed("verboo", "a", "boom")]);
+	primary.push([start("other", "b"), failed("other", "b", "also broken")]);
+	const pi = new FakePi();
+	const store = new ProviderStore(`${scratchDir()}/failover-chained`);
+	store.add("verboo", { baseUrl: BASE_URL, modelOverrides: { a: { fallback: { provider: "other", model: "b" } } } });
+	store.add("other", { baseUrl: "https://other.test/v1", modelOverrides: { b: { fallback: { provider: "builtin", model: "c" } } } });
+	const failover = new ModelFailover(pi.extension(), store);
+	const ctx = new FakeSessionContext();
+	await pi.sessionStart(ctx);
+	ctx.registry.set("other/b", model("other", "b"));
+	ctx.registry.set("builtin/c", model("builtin", "c"));
+	ctx.routed.add("verboo");
+	ctx.routed.add("other");
+	ctx.reenter = (target, reentrantContext, options) => failover.stream(target as never, reentrantContext as never, options as never);
+	ctx.scripts.push([start("builtin", "c"), done("builtin", "c", 0.25)]);
+	await pi.emit("agent_start");
+	const events = await collect(failover.stream(model("verboo", "a") as never, {} as never, {}));
+	assertEq(events.at(-1)?.type, "done");
+	assertEq((events.at(-1)?.message as { provider: string }).provider, "builtin", "the last hop serves the turn");
+	assertEq(context_served(ctx), "other/b,builtin/c");
+	assertEq(ctx.notifications.length, 0);
+	await pi.emit("agent_settled");
+	assertEq(JSON.stringify(ctx.notifications.map((notice) => notice.type)), JSON.stringify(["info", "info"]));
+	assertEq(ctx.notifications[0].message.includes("other/b failed (also broken)"), true);
+	assertEq(ctx.notifications[0].message.includes("builtin/c served the turn at $0.250000"), true);
+	assertEq(ctx.notifications[1].message.includes("verboo/a failed (boom)"), true);
+	assertEq(ctx.notifications[1].message.includes("builtin/c served the turn"), true);
+});
+
+function context_served(ctx: FakeSessionContext): string {
+	return ctx.served.map((served) => `${served.model.provider}/${served.model.id}`).join(",");
+}

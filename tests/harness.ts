@@ -115,8 +115,13 @@ export class FakePi {
 
 	/** Delivers the event pi emits once its session context is bound. */
 	async sessionStart(ctx: unknown): Promise<void> {
-		for (const handler of this.handlers.get("session_start") ?? []) {
-			await handler({ type: "session_start" }, ctx);
+		await this.emit("session_start", ctx);
+	}
+
+	/** Delivers any other lifecycle event pi emits, in the order it emits it. */
+	async emit(event: string, ctx?: unknown): Promise<void> {
+		for (const handler of this.handlers.get(event) ?? []) {
+			await handler({ type: event }, ctx);
 		}
 	}
 

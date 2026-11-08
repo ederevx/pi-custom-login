@@ -20,13 +20,23 @@ import { ProviderStore } from "./provider-store.ts";
 
 export class ModelFailover {
 	private readonly store: ProviderStore;
+	private readonly pending: Array<{ message: string; level: "info" | "warning" | "error" }> = [];
 	private context: ExtensionContext | undefined;
+	private running = false;
 
 	constructor(pi: ExtensionAPI, store: ProviderStore) {
 		this.store = store;
 		// The stream hook receives no context, so pi's own is kept from the session it belongs to.
 		pi.on("session_start", (_event, ctx) => {
 			this.context = ctx;
+		});
+		// A notice waits for the run it belongs to: pi has stopped streaming by then.
+		pi.on("agent_start", () => {
+			this.running = true;
+		});
+		pi.on("agent_settled", () => {
+			this.running = false;
+			this.flush();
 		});
 	}
 
@@ -97,7 +107,7 @@ export class ModelFailover {
 			this.report(model, failure.error, served);
 		} catch (error) {
 			output.push(failure);
-			this.context?.ui.notify(`${model.provider}/${model.id} failed and its fallback could not run: ${(error as Error).message}`, "warning");
+			this.notice(`${model.provider}/${model.id} failed and its fallback could not run: ${(error as Error).message}`, "warning");
 		}
 	}
 
@@ -110,16 +120,16 @@ export class ModelFailover {
 			return undefined;
 		}
 		if (chain.loops(model.provider, model.id)) {
-			this.context?.ui.notify(`${name} failed and its fallback chain returns to it; the request was not retried`, "warning");
+			this.notice(`${name} failed and its fallback chain returns to it; the request was not retried`, "warning");
 			return undefined;
 		}
 		const target = this.context?.modelRegistry.find(hop.provider, hop.model);
 		if (target === undefined) {
-			this.context?.ui.notify(`${name} failed and its fallback ${hop.provider}/${hop.model} is not in the model list`, "warning");
+			this.notice(`${name} failed and its fallback ${hop.provider}/${hop.model} is not in the model list`, "warning");
 			return undefined;
 		}
 		if (!this.context?.modelRegistry.hasConfiguredAuth(target)) {
-			this.context?.ui.notify(`${name} failed and its fallback ${hop.provider}/${hop.model} has no credentials`, "warning");
+			this.notice(`${name} failed and its fallback ${hop.provider}/${hop.model} has no credentials`, "warning");
 			return undefined;
 		}
 		return target;
@@ -164,6 +174,21 @@ export class ModelFailover {
 			: served.stopReason === "aborted"
 				? "was cancelled"
 				: `served the turn at $${served.usage.cost.total.toFixed(6)}${spent}`;
-		this.context?.ui.notify(`${model.provider}/${model.id} failed (${failure.errorMessage ?? "no error message"}); ${served.provider}/${served.model} ${outcome}`, "warning");
+		this.notice(`${model.provider}/${model.id} failed (${failure.errorMessage ?? "no error message"}); ${served.provider}/${served.model} ${outcome}`, "info");
+	}
+
+	/** A run's notices wait for its settle, so nothing lands in the middle of streamed output. */
+	private notice(message: string, level: "info" | "warning" | "error"): void {
+		if (!this.running) {
+			this.context?.ui.notify(message, level);
+			return;
+		}
+		this.pending.push({ message, level });
+	}
+
+	private flush(): void {
+		for (const notice of this.pending.splice(0)) {
+			this.context?.ui.notify(notice.message, notice.level);
+		}
 	}
 }

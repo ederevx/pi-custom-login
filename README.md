@@ -84,10 +84,12 @@ been streamed all pass through unchanged. The extension adds no timer: when
 pi's own request timeout ends an attempt before anything streamed, that is a
 provider error and the fallback serves.
 
-Every failover is announced once it happens, naming both models and what the
-served turn cost, so no reply is silently billed to a provider you did not
-choose. Fallbacks chain: when the fallback fails too and is itself a provider
-of this extension, its own fallback applies. A model may not fall back to
+Every failover is announced once the run settles, not while it streams, as an
+ordinary notice rather than a warning: it names both models and what the served
+turn cost, so no reply is silently billed to a provider you did not choose. A
+chain announces one line per hop, in the order the hops failed. Fallbacks
+chain: when the fallback fails too and is itself a provider of this extension,
+its own fallback applies. A model may not fall back to
 itself or to a chain that returns to it —
 `/providers-settings` refuses such a pair, and the failover refuses one found in
 the file rather than retrying forever.
