@@ -142,8 +142,8 @@ export class CatalogEntry {
 		return features;
 	}
 
-	/** Prices are USD per token in an OpenRouter-shaped `pricing` object and already
-	 *  USD per million tokens in the `cost.text` one; either way pi wants the latter. */
+	/** Prices are USD per token in a router's `pricing` object and already USD per
+	 *  million tokens in the `cost.text` one; either way pi wants the latter. */
 	private cost(): RefreshedModels[number]["cost"] {
 		const pricing = this.at(["pricing"]);
 		if (pricing !== undefined) {

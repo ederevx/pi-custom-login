@@ -68,8 +68,8 @@ export class ModelCatalog {
 
 	/** The extension claims only OpenAI compatibility, whose instruction role is
 	 *  `system`; pi otherwise guesses `developer` for an unrecognized base URL,
-	 *  which several OpenAI-compatible servers (DeepSeek among them) reject. The
-	 *  saved list stays raw, so the key is re-applied on every return. */
+	 *  which compatible-only servers commonly reject. The saved list stays raw,
+	 *  so the key is re-applied on every return. */
 	private baseline(models: RefreshedModels): RefreshedModels {
 		return models.map((model) => ({ ...model, compat: { supportsDeveloperRole: false, ...model.compat } }));
 	}
