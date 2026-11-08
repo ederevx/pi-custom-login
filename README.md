@@ -117,7 +117,7 @@ sits in:
 | context window | `context_window`, then `limit.context`, `context_length`; `max_context_window` only stands in when none of those is present |
 | output cap | `max_output_tokens`, then `limit.output`, `max_output_length` |
 | image input | `vision`, then `input_modalities` or `modalities.input` (an entry naming `image` or an image MIME type) |
-| reasoning | `reasoning` (an object, or a bare flag), then `capabilities.reasoning` (`supported`, or a non-empty `effort_levels`/`effort` list), then `supported_features` containing `reasoning` |
+| reasoning | `reasoning` (an object, or a bare flag), then `capabilities.reasoning` (`supported`, or a non-empty `effort_levels`/`effort` list), then `supported_features`: a list naming `reasoning` means it does, and a list that omits it means it does not |
 | cost | `pricing`, then `cost.text` (`input.price`, `output.price`, `input.cache.read`, `input.cache.write`) |
 
 Shapes pi has no field for are left alone rather than guessed at: a context-length

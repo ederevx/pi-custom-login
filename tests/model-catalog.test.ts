@@ -735,6 +735,15 @@ test("the Reka shape supplies the same facts under other names", async () => {
 	]));
 });
 
+test("a feature list without reasoning settles it against a supplementary effort", async () => {
+	respondWith({
+		data: [{ id: "model", supported_features: [] }],
+		models: [{ slug: "model", supported_reasoning_levels: [{ effort: "high" }] }],
+	});
+	const models = await new ModelCatalog(ENTRY).models(networked());
+	assertEq(JSON.stringify(models.map((model) => model.reasoning)), JSON.stringify([false]));
+});
+
 test("a declared flat field wins over an alternative shape", async () => {
 	respondWith({
 		data: [

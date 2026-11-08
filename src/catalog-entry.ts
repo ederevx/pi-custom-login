@@ -64,14 +64,16 @@ export class CatalogEntry {
 		return declared ?? this.limit(metadata, "max_output_tokens") ?? DEFAULT_MAX_TOKENS;
 	}
 
-	/** A declared reasoning shape settles the question for the entry itself. */
+	/** A declared reasoning shape settles the question for the entry itself, and a
+	 *  feature list that omits reasoning is such a declaration. */
 	private reasoning(metadata: Record<string, unknown> | undefined): boolean {
 		const declared = this.declaredReasoning();
 		if (declared !== undefined) {
 			return declared;
 		}
-		if (this.features()?.includes("reasoning") === true) {
-			return true;
+		const features = this.features();
+		if (features !== undefined) {
+			return features.includes("reasoning");
 		}
 		return this.metadataEfforts(metadata).some((effort) => effort !== "none");
 	}
