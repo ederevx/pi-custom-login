@@ -365,10 +365,10 @@ test("a chain is followed hop by hop and reported once per hop at settle", async
 	assertEq(ctx.notifications.length, 0);
 	await pi.emit("agent_settled");
 	assertEq(JSON.stringify(ctx.notifications.map((notice) => notice.type)), JSON.stringify(["info", "info"]));
-	assertEq(ctx.notifications[0].message.includes("other/b failed (also broken)"), true);
-	assertEq(ctx.notifications[0].message.includes("builtin/c served the turn at $0.250000"), true);
-	assertEq(ctx.notifications[1].message.includes("verboo/a failed (boom)"), true);
-	assertEq(ctx.notifications[1].message.includes("builtin/c served the turn"), true);
+	assertEq(ctx.notifications[0].message.includes("verboo/a failed (boom)"), true);
+	assertEq(ctx.notifications[0].message.includes("builtin/c served the turn"), true);
+	assertEq(ctx.notifications[1].message.includes("other/b failed (also broken)"), true);
+	assertEq(ctx.notifications[1].message.includes("builtin/c served the turn at $0.250000"), true);
 });
 
 function context_served(ctx: FakeSessionContext): string {

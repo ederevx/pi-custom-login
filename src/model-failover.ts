@@ -96,6 +96,9 @@ export class ModelFailover {
 		options: SimpleStreamOptions | undefined,
 		output: AssistantMessageEventStream,
 	): Promise<void> {
+		// The hop behind this one reports while this frame is still waiting for it, so the
+		// place this failure's own notice belongs in is taken before the fallback runs.
+		const noticeIndex = this.pending.length;
 		try {
 			const target = this.target(model);
 			if (target === undefined || this.context === undefined) {
@@ -104,7 +107,7 @@ export class ModelFailover {
 			}
 			const attempt = this.context.modelRegistry.streamSimple(target, context, this.options(target, options));
 			const served = await this.pipe(attempt, output);
-			this.report(model, failure.error, served);
+			this.report(model, failure.error, served, noticeIndex);
 		} catch (error) {
 			output.push(failure);
 			this.notice(`${model.provider}/${model.id} failed and its fallback could not run: ${(error as Error).message}`, "warning");
@@ -163,7 +166,7 @@ export class ModelFailover {
 	}
 
 	/** The fallback convention: name what served the turn and what it cost. */
-	private report(model: Model<Api>, failure: AssistantMessage, served: AssistantMessage | undefined): void {
+	private report(model: Model<Api>, failure: AssistantMessage, served: AssistantMessage | undefined, noticeIndex: number): void {
 		if (served === undefined) {
 			return;
 		}
@@ -174,16 +177,18 @@ export class ModelFailover {
 			: served.stopReason === "aborted"
 				? "was cancelled"
 				: `served the turn at $${served.usage.cost.total.toFixed(6)}${spent}`;
-		this.notice(`${model.provider}/${model.id} failed (${failure.errorMessage ?? "no error message"}); ${served.provider}/${served.model} ${outcome}`, "info");
+		this.notice(`${model.provider}/${model.id} failed (${failure.errorMessage ?? "no error message"}); ${served.provider}/${served.model} ${outcome}`, "info", noticeIndex);
 	}
 
-	/** A run's notices wait for its settle, so nothing lands in the middle of streamed output. */
-	private notice(message: string, level: "info" | "warning" | "error"): void {
+	/** A run's notices wait for its settle, so nothing lands in the middle of streamed output;
+	 *  a notice handed a place in that queue keeps it. */
+	private notice(message: string, level: "info" | "warning" | "error", index?: number): void {
 		if (!this.running) {
 			this.context?.ui.notify(message, level);
 			return;
 		}
-		this.pending.push({ message, level });
+		const at = index === undefined ? this.pending.length : Math.min(index, this.pending.length);
+		this.pending.splice(at, 0, { message, level });
 	}
 
 	private flush(): void {
