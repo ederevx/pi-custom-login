@@ -675,3 +675,149 @@ test("a fallback is stored for the failover and never reaches the model", async 
 	assertEq("fallback" in model, false);
 	assertEq(JSON.stringify(entry.modelOverrides?.m.fallback), JSON.stringify({ provider: "other", model: "b" }));
 });
+
+test("the OpenCode Go shape supplies every model field pi wants", async () => {
+	respondWith({
+		data: [
+			{
+				id: "deepseek-v4.1-flash",
+				name: "DeepSeek V4.1 Flash",
+				limit: { context: 1000000, output: 384000 },
+				modalities: { input: ["text", "image/jpeg", "image/png", "image/gif", "image/webp"], output: ["text"] },
+				capabilities: { reasoning: { supported: true, effort: ["low", "high", "max"] } },
+				cost: { text: { input: { price: 0.15, cache: { read: 0.003, write: 0.0001 } }, output: { price: 0.6 } } },
+			},
+		],
+	});
+	const models = await new ModelCatalog(ENTRY).models(networked());
+	assertEq(JSON.stringify(models), JSON.stringify([
+		{
+			id: "deepseek-v4.1-flash",
+			name: "DeepSeek V4.1 Flash",
+			api: "openai-completions",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 1000000,
+			maxTokens: 384000,
+			cost: { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0.0001 },
+			compat: { supportsDeveloperRole: false },
+		},
+	]));
+});
+
+test("the Reka shape supplies the same facts under other names", async () => {
+	respondWith({
+		data: [
+			{
+				id: "qwen/qwen3.6-27b",
+				name: "Qwen3.6 27B",
+				context_length: 262144,
+				max_output_length: 32768,
+				input_modalities: ["text"],
+				supported_features: ["tools", "json_mode", "reasoning"],
+				pricing: { prompt: "0.00000029", completion: "0.00000195" },
+			},
+		],
+	});
+	const models = await new ModelCatalog(ENTRY).models(networked());
+	assertEq(JSON.stringify(models), JSON.stringify([
+		{
+			id: "qwen/qwen3.6-27b",
+			name: "Qwen3.6 27B",
+			api: "openai-completions",
+			reasoning: true,
+			input: ["text"],
+			contextWindow: 262144,
+			maxTokens: 32768,
+			cost: { input: 0.29, output: 1.95, cacheRead: 0, cacheWrite: 0 },
+			compat: { supportsDeveloperRole: false },
+		},
+	]));
+});
+
+test("a declared flat field wins over an alternative shape", async () => {
+	respondWith({
+		data: [
+			{
+				id: "m",
+				display_name: "Flat",
+				name: "Nested",
+				context_window: 1000,
+				limit: { context: 2000, output: 300 },
+				max_output_tokens: 100,
+				vision: false,
+				modalities: { input: ["image/png"] },
+				reasoning: { effort_levels: ["high"] },
+				capabilities: { reasoning: { supported: false } },
+				pricing: { prompt: "0.000001" },
+				cost: { text: { input: { price: 9 }, output: { price: 9 } } },
+			},
+		],
+	});
+	const model = (await new ModelCatalog(ENTRY).models(networked()))[0];
+	assertEq(model.name, "Flat");
+	assertEq(model.contextWindow, 1000);
+	assertEq(model.maxTokens, 100);
+	assertEq(JSON.stringify(model.input), JSON.stringify(["text"]));
+	assertEq(model.reasoning, true);
+	assertEq(JSON.stringify(model.cost), JSON.stringify({ input: 1, output: 0, cacheRead: 0, cacheWrite: 0 }));
+});
+
+test("an entry-level max_context_window stands in for the window", async () => {
+	respondWith({ data: [{ id: "m", max_context_window: 4096 }] });
+	const model = (await new ModelCatalog(ENTRY).models(networked()))[0];
+	assertEq(model.contextWindow, 4096);
+});
+
+test("a malformed shape nothing consumed does not invalidate the entry", async () => {
+	respondWith({ data: [{ id: "m", context_window: 200000, max_output_tokens: 8192, limit: "1M" }] });
+	const model = (await new ModelCatalog(ENTRY).models(networked()))[0];
+	assertEq(model.contextWindow, 200000);
+	assertEq(model.maxTokens, 8192);
+});
+
+test("an entry-level ceiling stands below an indexed effective window", async () => {
+	respondWith({ data: [{ id: "model", max_context_window: 400000 }], models: [{ slug: "model", context_window: 200000 }] });
+	const model = (await new ModelCatalog(ENTRY).models(networked()))[0];
+	assertEq(model.contextWindow, 200000);
+});
+
+for (const [description, entry, reasoning] of [
+	["a true reasoning flag", { id: "m", reasoning: true }, true],
+	["a false reasoning flag", { id: "m", reasoning: false }, false],
+	["a true capabilities flag", { id: "m", capabilities: { reasoning: true } }, true],
+] as const) {
+	test(`${description} declares reasoning on its own`, async () => {
+		respondWith({ data: [entry] });
+		assertEq((await new ModelCatalog(ENTRY).models(networked()))[0].reasoning, reasoning);
+	});
+}
+
+test("a capabilities.reasoning without levels and without a supported flag is no reasoning", async () => {
+	respondWith({ data: [{ id: "m", capabilities: { reasoning: {} } }] });
+	assertEq((await new ModelCatalog(ENTRY).models(networked()))[0].reasoning, false);
+});
+
+for (const [description, entry, problem] of [
+	["a non-object limit", { id: "m", limit: "1M" }, "invalid limit"],
+	["a non-integer limit.context", { id: "m", limit: { context: 1000.5 } }, "invalid context"],
+	["a non-integer context_length", { id: "m", context_length: "262144" }, "invalid context_length"],
+	["a non-positive max_output_length", { id: "m", max_output_length: 0 }, "invalid max_output_length"],
+	["a non-object modalities", { id: "m", modalities: "image" }, "invalid modalities"],
+	["a non-array modalities.input", { id: "m", modalities: { input: "text" } }, "invalid modalities.input"],
+	["a non-object capabilities", { id: "m", capabilities: "reasoning" }, "invalid capabilities"],
+	["a non-object capabilities.reasoning", { id: "m", capabilities: { reasoning: "yes" } }, "invalid capabilities.reasoning"],
+	["a non-string effort list", { id: "m", capabilities: { reasoning: { effort: ["high", 2] } } }, "invalid reasoning effort list"],
+	["a non-boolean supported flag", { id: "m", capabilities: { reasoning: { supported: "yes" } } }, "non-boolean supported"],
+	["a non-array supported_features", { id: "m", supported_features: "reasoning" }, "invalid supported_features"],
+	["a string per-million price", { id: "m", cost: { text: { input: { price: "0.15" } } } }, "invalid cost.text.input.price"],
+	["a negative per-million price", { id: "m", cost: { text: { output: { price: -1 } } } }, "invalid cost.text.output.price"],
+	["a non-object cost", { id: "m", cost: "free" }, "invalid cost"],
+	["a non-string name", { id: "m", name: 7 }, "non-string name"],
+] as Array<[string, Record<string, unknown>, string]>) {
+	test(`an entry with ${description} rejects and persists nothing`, async () => {
+		respondWith({ data: [entry] });
+		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), problem);
+		assertEq(capture.persisted, undefined);
+	});
+}

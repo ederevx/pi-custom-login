@@ -104,6 +104,33 @@ or without a credential the previously stored list is returned unchanged, and
 a failed, malformed, or unusable response leaves it untouched rather than
 emptying it. Re-adding an id replaces its registration.
 
+Those field names are not universal, so each model-level fact is read from the
+other shapes catalogs publish as well; the first one the entry carries wins,
+and a value that is present but malformed fails the refresh whichever shape it
+sits in:
+
+| Fact | Read from |
+| --- | --- |
+| display name | `display_name`, then `name` |
+| context window | `context_window`, then `limit.context`, `context_length`; `max_context_window` only stands in when none of those is present |
+| output cap | `max_output_tokens`, then `limit.output`, `max_output_length` |
+| image input | `vision`, then `input_modalities` or `modalities.input` (an entry naming `image` or an image MIME type) |
+| reasoning | `reasoning` (an object, or a bare flag), then `capabilities.reasoning` (`supported`, or a non-empty `effort_levels`/`effort` list), then `supported_features` containing `reasoning` |
+| cost | `pricing`, then `cost.text` (`input.price`, `output.price`, `input.cache.read`, `input.cache.write`) |
+
+Shapes pi has no field for are left alone rather than guessed at: a context-length
+`overrides` list or `cost.multipliers` beside a fixed price, `limit.input`,
+`modalities.output`, and the pricing keys `image` and `request`. A shape is read
+only when it is the one the entry actually supplies, so an unused and malformed
+one never invalidates an explicit value.
+
+The OpenCode Go catalog uses the second shape for every row: `limit.context`,
+`limit.output`, `name`, `modalities.input`, `capabilities.reasoning`, and a
+`cost.text` object whose prices are already USD per million tokens. Reka's uses
+`context_length`, `max_output_length`, `name`, `input_modalities`, and
+`supported_features`. The values read from the OpenCode Go payload are the ones
+pi's own built-in catalog carries for those models.
+
 Some endpoints keep that metadata outside the entries: Ollama Cloud's
 `/v1/models` returns bare `data` entries beside a non-standard top-level
 `models` array. `data` defines the model list and its order; a missing field
@@ -121,11 +148,15 @@ is a valid catalog and replaces the stored list.
 Model costs come from each data entry's OpenRouter-shaped `pricing` object:
 `prompt`, `completion`, `input_cache_read`, and `input_cache_write` are
 non-negative decimal strings in USD per token, converted to pi's USD per
-million tokens. Missing prices and the exact string `"-1"` (no fixed price)
+million tokens. When an entry carries no `pricing`, its `cost.text` object is
+read instead - `input.price`, `output.price`, `input.cache.read`, and
+`input.cache.write` are non-negative numbers, already per million tokens and
+taken as they are. Missing prices and the exact string `"-1"` (no fixed price)
 default to zero; this does not mean the model is free. Other negative values
 are invalid. Malformed pricing objects or supported price fields fail the
 refresh without replacing the stored list. Other pricing formats and
-conditional pricing are not interpreted. Its output
+conditional pricing - including OpenCode's time-of-day `cost.multipliers` and
+any `overrides` beside a price - are not interpreted. Its output
 limit comes from `max_output_tokens` when present, otherwise it defaults to
 16384 tokens; a `truncation_policy` is a tool-output truncation policy, not a
 requestable output cap, so it is never used for it.

@@ -19,12 +19,16 @@ export class CatalogEntry {
 		const id = this.id();
 		return {
 			id,
-			name: this.text(this.fields, "display_name") ?? this.text(metadata, "display_name", true) ?? id,
+			name:
+				this.text(this.fields, "display_name") ??
+				this.text(this.fields, "name", true) ??
+				this.text(metadata, "display_name", true) ??
+				id,
 			api: DEFAULT_API,
 			reasoning: this.reasoning(metadata),
-			input: (this.optionalBoolean("vision") ?? this.metadataVision(metadata)) === true ? ["text", "image"] : ["text"],
+			input: this.imageSupport(metadata) === true ? ["text", "image"] : ["text"],
 			contextWindow: this.contextWindow(metadata),
-			maxTokens: this.limit(this.fields, "max_output_tokens") ?? this.limit(metadata, "max_output_tokens") ?? DEFAULT_MAX_TOKENS,
+			maxTokens: this.maxTokens(metadata),
 			cost: this.cost(),
 		};
 	}
@@ -37,9 +41,11 @@ export class CatalogEntry {
 		return id;
 	}
 
-	/** `context_window` is the effective window; `max_context_window` only stands in for it. */
+	/** `context_window` is the effective window; `limit.context` and `context_length`
+	 *  are the same limit under other names. `max_context_window` is a ceiling and only
+	 *  stands in when no effective window is declared. */
 	private contextWindow(metadata: Record<string, unknown> | undefined): number {
-		const declared = this.limit(this.fields, "context_window");
+		const declared = this.firstLimit(["context_window"], ["limit", "context"], ["context_length"]);
 		if (declared !== undefined) {
 			return declared;
 		}
@@ -48,29 +54,111 @@ export class CatalogEntry {
 		if (window !== undefined && ceiling !== undefined && window > ceiling) {
 			throw this.failure("advertises a context window above its max_context_window");
 		}
-		return window ?? ceiling ?? DEFAULT_CONTEXT_WINDOW;
+		return window ?? this.firstLimit(["max_context_window"]) ?? ceiling ?? DEFAULT_CONTEXT_WINDOW;
 	}
 
-	/** A declared `reasoning` object settles the question for the entry itself. */
+	/** `max_output_tokens` is the flat name; `limit.output` and `max_output_length`
+	 *  are the same cap under other names, and only stand in for it. */
+	private maxTokens(metadata: Record<string, unknown> | undefined): number {
+		const declared = this.firstLimit(["max_output_tokens"], ["limit", "output"], ["max_output_length"]);
+		return declared ?? this.limit(metadata, "max_output_tokens") ?? DEFAULT_MAX_TOKENS;
+	}
+
+	/** A declared reasoning shape settles the question for the entry itself. */
 	private reasoning(metadata: Record<string, unknown> | undefined): boolean {
-		if (this.fields.reasoning !== undefined) {
-			return this.effortLevels().length > 0;
+		const declared = this.declaredReasoning();
+		if (declared !== undefined) {
+			return declared;
+		}
+		if (this.features()?.includes("reasoning") === true) {
+			return true;
 		}
 		return this.metadataEfforts(metadata).some((effort) => effort !== "none");
 	}
 
-	/** Prices are USD per token in the catalog, per million tokens in pi. */
-	private cost(): RefreshedModels[number]["cost"] {
-		const pricing = this.fields.pricing;
-		if (pricing !== undefined && (typeof pricing !== "object" || pricing === null || Array.isArray(pricing))) {
-			throw this.failure("has an invalid pricing");
+	/** `reasoning` wins over `capabilities.reasoning`, which is read only when it is reached. */
+	private declaredReasoning(): boolean | undefined {
+		if (this.fields.reasoning !== undefined) {
+			return this.declaredFlag(this.fields.reasoning, "reasoning");
 		}
-		const source = pricing as Record<string, unknown> | undefined;
+		const nested = this.at(["capabilities"])?.reasoning;
+		return nested === undefined ? undefined : this.declaredFlag(nested, "capabilities.reasoning");
+	}
+
+	/** A declared reasoning shape - a flag, or an object whose levels may be spelled
+	 *  `effort_levels` or `effort` - settles it, and an explicit `supported` flag wins. */
+	private declaredFlag(declared: unknown, label: string): boolean {
+		if (declared === null) {
+			return false;
+		}
+		if (typeof declared === "boolean") {
+			return declared;
+		}
+		if (typeof declared !== "object" || Array.isArray(declared)) {
+			throw this.failure(`has an invalid ${label}`);
+		}
+		const shape = declared as Record<string, unknown>;
+		const supported = this.optionalBoolean(shape, "supported");
+		const levels = shape.effort_levels ?? shape.effort;
+		if (levels !== undefined && (!Array.isArray(levels) || !levels.every((level) => typeof level === "string"))) {
+			throw this.failure("has an invalid reasoning effort list");
+		}
+		if (supported !== undefined) {
+			return supported;
+		}
+		return Array.isArray(levels) && levels.length > 0;
+	}
+
+	/** `vision` is the flat flag; a modality list names the same capability. */
+	private imageSupport(metadata: Record<string, unknown> | undefined): boolean | undefined {
+		return (
+			this.optionalBoolean(this.fields, "vision") ??
+			this.modalities(this.fields.input_modalities, "input_modalities") ??
+			this.modalities(this.at(["modalities"])?.input, "modalities.input") ??
+			this.modalities(metadata?.input_modalities, "input_modalities")
+		);
+	}
+
+	/** A modality list names image support as `image` or as image MIME types. */
+	private modalities(value: unknown, label: string): boolean | undefined {
+		if (value === undefined) {
+			return undefined;
+		}
+		if (!Array.isArray(value) || !value.every((modality) => typeof modality === "string")) {
+			throw this.failure(`has an invalid ${label}`);
+		}
+		return value.some((modality) => modality === "image" || modality.startsWith("image/"));
+	}
+
+	/** Some catalogs list capabilities as feature names instead of objects. */
+	private features(): string[] | undefined {
+		const features = this.fields.supported_features;
+		if (features === undefined) {
+			return undefined;
+		}
+		if (!Array.isArray(features) || !features.every((feature) => typeof feature === "string")) {
+			throw this.failure("has an invalid supported_features");
+		}
+		return features;
+	}
+
+	/** Prices are USD per token in an OpenRouter-shaped `pricing` object and already
+	 *  USD per million tokens in the `cost.text` one; either way pi wants the latter. */
+	private cost(): RefreshedModels[number]["cost"] {
+		const pricing = this.at(["pricing"]);
+		if (pricing !== undefined) {
+			return {
+				input: this.price(pricing, "prompt"),
+				output: this.price(pricing, "completion"),
+				cacheRead: this.price(pricing, "input_cache_read"),
+				cacheWrite: this.price(pricing, "input_cache_write"),
+			};
+		}
 		return {
-			input: this.price(source, "prompt"),
-			output: this.price(source, "completion"),
-			cacheRead: this.price(source, "input_cache_read"),
-			cacheWrite: this.price(source, "input_cache_write"),
+			input: this.money(this.at(["cost", "text", "input"])?.price, "cost.text.input.price"),
+			output: this.money(this.at(["cost", "text", "output"])?.price, "cost.text.output.price"),
+			cacheRead: this.money(this.at(["cost", "text", "input", "cache"])?.read, "cost.text.input.cache.read"),
+			cacheWrite: this.money(this.at(["cost", "text", "input", "cache"])?.write, "cost.text.input.cache.write"),
 		};
 	}
 
@@ -85,6 +173,46 @@ export class CatalogEntry {
 			throw this.failure(`has an invalid pricing.${field}`);
 		}
 		return price;
+	}
+
+	/** A per-million price is already a number; conditional overrides beside it are ignored. */
+	private money(value: unknown, label: string): number {
+		if (value === undefined) {
+			return 0;
+		}
+		if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+			throw this.failure(`has an invalid ${label}`);
+		}
+		return value;
+	}
+
+	/** The first declared limit wins and is validated like a flat field; a candidate is
+	 *  read only when reached, so a shape nothing consumed never invalidates the entry. */
+	private firstLimit(...paths: string[][]): number | undefined {
+		for (const path of paths) {
+			const container = path.length === 1 ? this.fields : this.at(path.slice(0, -1));
+			const value = this.limit(container, path[path.length - 1]);
+			if (value !== undefined) {
+				return value;
+			}
+		}
+		return undefined;
+	}
+
+	/** A nested object the entry carries; any level that is present but not an object is invalid. */
+	private at(path: string[]): Record<string, unknown> | undefined {
+		let container: Record<string, unknown> = this.fields;
+		for (const [index, key] of path.entries()) {
+			const value = container[key];
+			if (value === undefined) {
+				return undefined;
+			}
+			if (typeof value !== "object" || value === null || Array.isArray(value)) {
+				throw this.failure(`has an invalid ${path.slice(0, index + 1).join(".")}`);
+			}
+			container = value as Record<string, unknown>;
+		}
+		return container;
 	}
 
 	private limit(source: Record<string, unknown> | undefined, field: string): number | undefined {
@@ -109,8 +237,8 @@ export class CatalogEntry {
 		return blankIsAbsent && value.trim() === "" ? undefined : value;
 	}
 
-	private optionalBoolean(field: string): boolean | undefined {
-		const value = this.fields[field];
+	private optionalBoolean(source: Record<string, unknown>, field: string): boolean | undefined {
+		const value = source[field];
 		if (value === undefined) {
 			return undefined;
 		}
@@ -118,17 +246,6 @@ export class CatalogEntry {
 			throw this.failure(`has a non-boolean ${field}`);
 		}
 		return value;
-	}
-
-	private metadataVision(metadata: Record<string, unknown> | undefined): boolean | undefined {
-		const modalities = metadata?.input_modalities;
-		if (modalities === undefined) {
-			return undefined;
-		}
-		if (!Array.isArray(modalities) || !modalities.every((modality) => typeof modality === "string")) {
-			throw this.failure("has an invalid input_modalities");
-		}
-		return modalities.includes("image");
 	}
 
 	private metadataEfforts(metadata: Record<string, unknown> | undefined): string[] {
@@ -146,24 +263,6 @@ export class CatalogEntry {
 			}
 			return effort;
 		});
-	}
-
-	private effortLevels(): unknown[] {
-		const reasoning = this.fields.reasoning;
-		if (reasoning === undefined || reasoning === null) {
-			return [];
-		}
-		if (typeof reasoning !== "object" || Array.isArray(reasoning)) {
-			throw this.failure("has an invalid reasoning");
-		}
-		const levels = (reasoning as Record<string, unknown>).effort_levels;
-		if (levels === undefined) {
-			return [];
-		}
-		if (!Array.isArray(levels) || !levels.every((level) => typeof level === "string")) {
-			throw this.failure("has an invalid reasoning.effort_levels");
-		}
-		return levels;
 	}
 
 	private failure(problem: string): Error {
