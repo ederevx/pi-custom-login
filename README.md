@@ -159,9 +159,11 @@ are invalid. Malformed pricing objects or supported price fields fail the
 refresh without replacing the stored list. Other pricing formats and
 conditional pricing - including OpenCode's time-of-day `cost.multipliers` and
 any `overrides` beside a price - are not interpreted. Its output
-limit comes from `max_output_tokens` when present, otherwise it defaults to
-16384 tokens; a `truncation_policy` is a tool-output truncation policy, not a
-requestable output cap, so it is never used for it.
+limit follows the precedence above - `max_output_tokens`, then `limit.output`
+or `max_output_length`, and `PI_CUSTOM_LOGIN_DEFAULT_MAX_TOKENS` only when the
+supplementary entry supplies none of them; a `truncation_policy` is a
+tool-output truncation policy, not a requestable output cap, so it is never
+used for it.
 
 Missing context and output limits fall back to
 `PI_CUSTOM_LOGIN_DEFAULT_CONTEXT_WINDOW` and
