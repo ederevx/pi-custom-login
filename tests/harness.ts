@@ -13,13 +13,36 @@ import type { ExtensionAPI, ExtensionCommandContext, ProviderConfig } from "@ear
 
 export type TestFn = () => void | Promise<void>;
 
+interface NonPass {
+	name: string;
+	reason: string;
+}
+
+/**
+ * A test's own declared non-pass: the property it asserts cannot be exercised
+ * on this host. Thrown at runtime, so a capability probe reports the test it
+ * abandons instead of passing or failing it by accident.
+ */
+export class UnsupportedOutcome extends Error {
+	constructor(readonly reason: string) {
+		super(reason);
+		this.name = "UnsupportedOutcome";
+	}
+}
+
 class TestRegistry {
 	private readonly cases: Array<{ name: string; fn: TestFn }> = [];
+	private readonly nonPasses: NonPass[] = [];
 	private passed = 0;
 	private readonly failures: string[] = [];
 
 	register(name: string, fn: TestFn): void {
 		this.cases.push({ name, fn });
+	}
+
+	/** Record a property this host cannot exercise. Never counts as a pass. */
+	unsupported(name: string, reason: string): void {
+		this.nonPasses.push({ name, reason });
 	}
 
 	async runAll(): Promise<void> {
@@ -30,12 +53,21 @@ class TestRegistry {
 				this.passed += 1;
 				console.log(`  ok   ${testCase.name} (${Date.now() - started}ms)`);
 			} catch (error) {
+				if (error instanceof UnsupportedOutcome) {
+					this.unsupported(testCase.name, error.reason);
+					console.log(`  n/a  ${testCase.name} — ${error.reason}`);
+					continue;
+				}
 				this.failures.push(testCase.name);
 				console.error(`  FAIL ${testCase.name}`);
 				console.error(`       ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
 			}
 		}
 		console.log(`\n${this.passed}/${this.cases.length} passed`);
+		if (this.nonPasses.length > 0) {
+			console.log(`${this.nonPasses.length} not exercised on this host:`);
+			for (const nonPass of this.nonPasses) console.log(`  n/a  ${nonPass.name} — ${nonPass.reason}`);
+		}
 		if (this.failures.length > 0) console.error(`Failed: ${this.failures.join(", ")}`);
 	}
 
@@ -48,6 +80,11 @@ export const registry = new TestRegistry();
 
 export function test(name: string, fn: TestFn): void {
 	registry.register(name, fn);
+}
+
+/** Register a named non-pass for a property this host cannot exercise. */
+export function testUnsupported(name: string, reason: string): void {
+	registry.unsupported(name, reason);
 }
 
 export function assert(condition: unknown, message: string): asserts condition {

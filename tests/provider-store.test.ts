@@ -1,7 +1,7 @@
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { assertEq, assertThrows, scratchDir, test } from "./harness.ts";
+import { assertEq, assertThrows, scratchDir, test, testUnsupported } from "./harness.ts";
 import { ProviderStore } from "../src/provider-store.ts";
 
 function store(subdirectory: string): ProviderStore {
@@ -37,12 +37,30 @@ test("remove drops only the named provider", () => {
 	assertEq(Object.keys(providers.all()).join(","), "second");
 });
 
-test("a new file is readable only by its owner", () => {
+test("a saved provider survives a reload exactly", () => {
 	const providers = store("store-mode");
 	providers.add("verboo", { baseUrl: "https://code.verboo.ai/router/v1" });
-	const mode = statSync(join(scratchDir(), "store-mode", "custom-providers.json")).mode & 0o777;
-	assertEq(mode.toString(8), "600");
+	const reloaded = new ProviderStore(join(scratchDir(), "store-mode")).all();
+	assertEq(JSON.stringify(reloaded.verboo), '{"baseUrl":"https://code.verboo.ai/router/v1"}');
 });
+
+const OWNER_ONLY = "a new file is readable only by its owner";
+
+if (process.platform === "win32") {
+	// Windows Node implements no owner/group/other bits: a chmod neither sets
+	// nor reports 0600, and only an explicit DACL could carry the guarantee.
+	testUnsupported(
+		OWNER_ONLY,
+		"Windows Node implements no owner-only mode bits; the file is written and reloaded, but 0600 is unverified",
+	);
+} else {
+	test(OWNER_ONLY, () => {
+		const providers = store("store-owner");
+		providers.add("verboo", { baseUrl: "https://code.verboo.ai/router/v1" });
+		const mode = statSync(join(scratchDir(), "store-owner", "custom-providers.json")).mode & 0o777;
+		assertEq(mode.toString(8), "600");
+	});
+}
 
 test("a malformed file fails instead of hiding the damage", () => {
 	const providers = store("store-malformed");
