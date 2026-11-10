@@ -47,8 +47,6 @@ test("a saved provider survives a reload exactly", () => {
 const OWNER_ONLY = "a new file is readable only by its owner";
 
 if (process.platform === "win32") {
-	// Windows Node implements no owner/group/other bits: a chmod neither sets
-	// nor reports 0600, and only an explicit DACL could carry the guarantee.
 	testUnsupported(
 		OWNER_ONLY,
 		"Windows Node implements no owner-only mode bits; the file is written and reloaded, but 0600 is unverified",
