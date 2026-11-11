@@ -160,7 +160,7 @@ export class CatalogEntry {
 			input: this.money(this.at(["cost", "text", "input"])?.price, "cost.text.input.price"),
 			output: this.money(this.at(["cost", "text", "output"])?.price, "cost.text.output.price"),
 			cacheRead: this.money(this.at(["cost", "text", "input", "cache"])?.read, "cost.text.input.cache.read"),
-			cacheWrite: this.money(this.at(["cost", "text", "input", "cache"])?.write, "cost.text.input.cache.write"),
+			cacheWrite: this.cacheWrite(this.at(["cost", "text", "input", "cache"])?.write, "cost.text.input.cache.write"),
 		};
 	}
 
@@ -186,6 +186,21 @@ export class CatalogEntry {
 			throw this.failure(`has an invalid ${label}`);
 		}
 		return value;
+	}
+
+	/** A write price may name a rate per retention window, which supplies no single rate. */
+	private cacheWrite(value: unknown, label: string): number {
+		return this.keyedPrices(value) ? 0 : this.money(value, label);
+	}
+
+	/** True for a non-empty map whose every value is a non-negative finite number. */
+	private keyedPrices(value: unknown): boolean {
+		if (typeof value !== "object" || value === null || Array.isArray(value)) {
+			return false;
+		}
+		const prices = Object.values(value);
+		return prices.length > 0
+			&& prices.every((price) => typeof price === "number" && Number.isFinite(price) && price >= 0);
 	}
 
 	/** The first declared limit wins and is validated like a flat field; a candidate is

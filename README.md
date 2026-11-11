@@ -155,7 +155,10 @@ read instead - `input.price`, `output.price`, `input.cache.read`, and
 `input.cache.write` are non-negative numbers, already per million tokens and
 taken as they are. Missing prices and the exact string `"-1"` (no fixed price)
 default to zero; this does not mean the model is free. Other negative values
-are invalid. Malformed pricing objects or supported price fields fail the
+are invalid. A `cache.write` that names a rate per retention window rather
+than one number - OpenCode's `{"30m": 0.125, "12h": 0.25}` - prices no single
+rate, so `cacheWrite` is zero; a window map whose values are not non-negative
+numbers is invalid. Malformed pricing objects or supported price fields fail the
 refresh without replacing the stored list. Other pricing formats and
 conditional pricing - including OpenCode's time-of-day `cost.multipliers` and
 any `overrides` beside a price - are not interpreted. Its output

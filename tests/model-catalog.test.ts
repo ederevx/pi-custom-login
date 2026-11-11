@@ -378,6 +378,37 @@ test("partial pricing preserves supplied costs", async () => {
 	}));
 });
 
+test("a cache write priced per retention window supplies no fixed cost", async () => {
+	respondWith({
+		data: [{
+			id: "windowed",
+			cost: {
+				text: {
+					input: { price: 1, cache: { read: 0.5, write: { "30m": 0.125, "12h": 0.25 } } },
+					output: { price: 2 },
+				},
+			},
+		}],
+	});
+	const models = await new ModelCatalog(ENTRY).models(networked());
+	assertEq(JSON.stringify(models[0].cost), JSON.stringify({
+		input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0,
+	}));
+});
+
+for (const write of [{}, { "30m": -1 }, { "30m": "0.125" }, []]) {
+	test(`a cache write ${JSON.stringify(write)} rejects`, async () => {
+		respondWith({
+			data: [{ id: "valid" }, { id: "bad", cost: { text: { input: { cache: { write } } } } }],
+		});
+		await assertRejects(
+			() => new ModelCatalog(ENTRY).models(networked()),
+			"has an invalid cost.text.input.cache.write",
+		);
+		assertEq(capture.persisted, undefined);
+	});
+}
+
 for (const pricing of [null, [], "0"]) {
 	test(`invalid pricing ${JSON.stringify(pricing)} rejects`, async () => {
 		respondWith({ data: [{ id: "valid" }, { id: "bad", pricing }] });
