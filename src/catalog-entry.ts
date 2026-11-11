@@ -193,14 +193,15 @@ export class CatalogEntry {
 		return this.keyedPrices(value) ? 0 : this.money(value, label);
 	}
 
-	/** True for a non-empty map whose every value is a non-negative finite number. */
 	private keyedPrices(value: unknown): boolean {
 		if (typeof value !== "object" || value === null || Array.isArray(value)) {
 			return false;
 		}
 		const prices = Object.values(value);
-		return prices.length > 0
-			&& prices.every((price) => typeof price === "number" && Number.isFinite(price) && price >= 0);
+		return (
+			prices.length > 0 &&
+			prices.every((price) => typeof price === "number" && Number.isFinite(price) && price >= 0)
+		);
 	}
 
 	/** The first declared limit wins and is validated like a flat field; a candidate is

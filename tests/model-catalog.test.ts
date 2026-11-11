@@ -394,6 +394,7 @@ test("a cache write priced per retention window supplies no fixed cost", async (
 	assertEq(JSON.stringify(models[0].cost), JSON.stringify({
 		input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0,
 	}));
+	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))));
 });
 
 for (const write of [{}, { "30m": -1 }, { "30m": "0.125" }, []]) {
