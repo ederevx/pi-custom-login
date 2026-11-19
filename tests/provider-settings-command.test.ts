@@ -23,6 +23,15 @@ const GLM_MODEL = {
 	cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
 };
 
+const OTHER_MODEL = {
+	id: "m2",
+	name: "M2",
+	reasoning: false,
+	contextWindow: 4096,
+	maxTokens: 1024,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+};
+
 function subject(name: string): { pi: FakePi; store: ProviderStore } {
 	const pi = new FakePi();
 	const store = new ProviderStore(`${scratchDir()}/${name}`);
@@ -44,48 +53,75 @@ test("a store without providers explains itself", async () => {
 	assertEq(ctx.notifications.at(-1)?.type, "warning");
 });
 
-test("editing a limit writes the override and re-registers the provider", async () => {
-	const { pi, store } = registered("settings-edit");
-	const ctx = new FakeCommandContext(["262144"], [VERBOO, GLM, "contextWindow", EDIT], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(store.all().verboo.modelOverrides?.["glm-5.2"]?.contextWindow, 262144);
-	assertEq(store.all().verboo.baseUrl, "https://code.verboo.ai/router/v1");
-	assertEq(pi.unregistered.at(-1), "verboo");
-	assertEq(ctx.lastMessage, "Saved contextWindow for glm-5.2; open /model to apply");
-});
-
-test("editing a cost field merges over the other prices", async () => {
-	const { pi, store } = registered("settings-cost");
-	const ctx = new FakeCommandContext(["5"], [VERBOO, GLM, "cost.input", EDIT], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(JSON.stringify(store.all().verboo.modelOverrides?.["glm-5.2"]?.cost), JSON.stringify({ input: 5 }));
-});
-
-test("editing reasoning offers true and false", async () => {
-	const { pi, store } = registered("settings-reasoning");
-	const ctx = new FakeCommandContext([], [VERBOO, GLM, "reasoning", "false"], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(store.all().verboo.modelOverrides?.["glm-5.2"]?.reasoning, false);
+test("an edit writes the override and re-registers the provider", async () => {
+	const cases: Array<[string, string, string[], Array<string | undefined>, Record<string, unknown>, string?]> = [
+		[
+			"settings-edit",
+			"a limit",
+			["262144"],
+			[VERBOO, GLM, "contextWindow", EDIT],
+			{ "glm-5.2": { contextWindow: 262144 } },
+			"Saved contextWindow for glm-5.2; open /model to apply",
+		],
+		["settings-cost", "a cost field", ["5"], [VERBOO, GLM, "cost.input", EDIT], { "glm-5.2": { cost: { input: 5 } } }],
+		["settings-reasoning", "reasoning", [], [VERBOO, GLM, "reasoning", "false"], { "glm-5.2": { reasoning: false } }],
+	];
+	for (const [slug, label, answers, selections, expected, message] of cases) {
+		const { pi, store } = registered(slug);
+		const ctx = new FakeCommandContext(answers, selections, { verboo: [GLM_MODEL] });
+		await pi.command("providers-settings", "", ctx);
+		assertEq(JSON.stringify(store.all().verboo.modelOverrides), JSON.stringify(expected), label);
+		assertEq(store.all().verboo.baseUrl, "https://code.verboo.ai/router/v1", label);
+		assertEq(pi.unregistered.at(-1), "verboo", label);
+		if (message !== undefined) assertEq(ctx.lastMessage, message, label);
+	}
 });
 
 test("an invalid value warns and records nothing", async () => {
-	const { pi, store } = registered("settings-invalid");
-	const ctx = new FakeCommandContext(["abc"], [VERBOO, GLM, "contextWindow", EDIT], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(store.all().verboo.modelOverrides, undefined);
-	assertEq(ctx.notifications.at(-1)?.type, "warning");
+	const cases: Array<[string, string, string, string?]> = [
+		["settings-invalid", "contextWindow", "abc"],
+		["settings-json-invalid", "headers", "{oops", "headers expects valid JSON"],
+		["settings-json-shape", "headers", '{"X-Tier":1}', "headers.X-Tier"],
+	];
+	for (const [slug, field, value, message] of cases) {
+		const label = `${field} ${JSON.stringify(value)}`;
+		const { pi, store } = registered(slug);
+		const ctx = new FakeCommandContext([value], [VERBOO, GLM, field, EDIT], { verboo: [GLM_MODEL] });
+		await pi.command("providers-settings", "", ctx);
+		assertEq(store.all().verboo.modelOverrides, undefined, label);
+		assertEq(ctx.notifications.at(-1)?.type, "warning", label);
+		if (message !== undefined) assertEq(ctx.lastMessage.includes(message), true, label);
+	}
 });
 
-test("clearing drops the override and an empty map leaves the entry", async () => {
-	const { pi, store } = registered("settings-clear", {
-		baseUrl: "https://code.verboo.ai/router/v1",
-		modelOverrides: { "glm-5.2": { contextWindow: 262144 } },
-	});
-	const ctx = new FakeCommandContext([], [VERBOO, GLM, OVERRIDE, CLEAR], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(store.all().verboo.modelOverrides, undefined);
-	assertEq(store.all().verboo.baseUrl, "https://code.verboo.ai/router/v1");
-	assertEq(ctx.lastMessage, "Cleared the override for glm-5.2; open /model to apply");
+test("clearing an override drops its field and the entry once it was the last one", async () => {
+	const cases: Array<[string, Record<string, unknown>, string, string, unknown, string?]> = [
+		[
+			"settings-clear",
+			{ "glm-5.2": { contextWindow: 262144 } },
+			OVERRIDE,
+			CLEAR,
+			undefined,
+			"Cleared the override for glm-5.2; open /model to apply",
+		],
+		[
+			"settings-clear-field",
+			{ "glm-5.2": { contextWindow: 262144, cost: { input: 5, output: 6 } } },
+			"cost.input",
+			CLEAR_FIELD,
+			{ "glm-5.2": { contextWindow: 262144, cost: { output: 6 } } },
+			"Cleared cost.input for glm-5.2; open /model to apply",
+		],
+		["settings-clear-last", { "glm-5.2": { contextWindow: 262144 } }, "contextWindow", CLEAR_FIELD, undefined],
+	];
+	for (const [slug, overrides, field, choice, expected, message] of cases) {
+		const { pi, store } = registered(slug, { baseUrl: "https://code.verboo.ai/router/v1", modelOverrides: overrides as never });
+		const ctx = new FakeCommandContext([], [VERBOO, GLM, field, choice], { verboo: [GLM_MODEL] });
+		await pi.command("providers-settings", "", ctx);
+		assertEq(JSON.stringify(store.all().verboo.modelOverrides), JSON.stringify(expected), `${field} via ${choice}`);
+		assertEq(store.all().verboo.baseUrl, "https://code.verboo.ai/router/v1", `${field} via ${choice}`);
+		if (message !== undefined) assertEq(ctx.lastMessage, message, `${field} via ${choice}`);
+	}
 });
 
 test("an unfetched catalog falls back to typing the model id", async () => {
@@ -95,29 +131,21 @@ test("an unfetched catalog falls back to typing the model id", async () => {
 	assertEq(store.all().verboo.modelOverrides?.m2?.maxTokens, 4096);
 });
 
-test("cancelling at the provider select records nothing", async () => {
-	const { pi, store } = registered("settings-cancel");
-	const ctx = new FakeCommandContext([], [undefined], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(store.all().verboo.modelOverrides, undefined);
-	assertEq(pi.unregistered.length, 0);
-});
-
-test("cancelling at a value prompt notifies nothing and reopens the fields", async () => {
-	const { pi, store } = registered("settings-cancel-value");
-	const ctx = new FakeCommandContext([undefined], [VERBOO, GLM, "contextWindow", EDIT], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(JSON.stringify(ctx.notifications), "[]");
-	assertEq(store.all().verboo.modelOverrides, undefined);
-	assertEq(JSON.stringify(ctx.offers[4]), JSON.stringify(ctx.offers[2]));
-});
-
-test("cancelling at the model list opens no prompt and records nothing", async () => {
-	const { pi, store } = registered("settings-cancel-model");
-	const ctx = new FakeCommandContext(["unused"], [VERBOO, undefined], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(JSON.stringify(ctx.notifications), "[]");
-	assertEq(store.all().verboo.modelOverrides, undefined);
+test("cancelling at any level records nothing", async () => {
+	const cases: Array<[string, string, Array<string | undefined>, Array<string | undefined>, number[]?]> = [
+		["settings-cancel", "the provider select", [], [undefined]],
+		["settings-cancel-value", "a value prompt", [undefined], [VERBOO, GLM, "contextWindow", EDIT], [4, 2]],
+		["settings-cancel-model", "the model list", ["unused"], [VERBOO, undefined]],
+	];
+	for (const [slug, label, answers, selections, back] of cases) {
+		const { pi, store } = registered(slug);
+		const ctx = new FakeCommandContext(answers, selections, { verboo: [GLM_MODEL] });
+		await pi.command("providers-settings", "", ctx);
+		assertEq(JSON.stringify(ctx.notifications), "[]", label);
+		assertEq(store.all().verboo.modelOverrides, undefined, label);
+		assertEq(pi.unregistered.length, 0, label);
+		if (back !== undefined) assertEq(JSON.stringify(ctx.offers[back[0]]), JSON.stringify(ctx.offers[back[1]]), label);
+	}
 });
 
 test("the field list follows pi's documented order", async () => {
@@ -173,21 +201,17 @@ test("two edits in one run keep both", async () => {
 	assertEq(override?.maxTokens, 32768);
 });
 
-test("a field without an override offers no clear", async () => {
-	const { pi } = registered("settings-no-clear");
-	const ctx = new FakeCommandContext([], [VERBOO, GLM, "cost.input", undefined], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(JSON.stringify(ctx.offers[3]), JSON.stringify([EDIT]));
-});
-
-test("a field with an override offers clear beside the edit", async () => {
-	const { pi } = registered("settings-clear-offer", {
-		baseUrl: "https://code.verboo.ai/router/v1",
-		modelOverrides: { "glm-5.2": { contextWindow: 262144 } },
-	});
-	const ctx = new FakeCommandContext([], [VERBOO, GLM, "contextWindow", undefined], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(JSON.stringify(ctx.offers[3]), JSON.stringify([EDIT, CLEAR_FIELD]));
+test("a field offers clear only when it carries an override", async () => {
+	const cases: Array<[string, string, string, Record<string, unknown> | undefined, string[]]> = [
+		["settings-no-clear", "a field without an override", "cost.input", undefined, [EDIT]],
+		["settings-clear-offer", "a field with an override", "contextWindow", { "glm-5.2": { contextWindow: 262144 } }, [EDIT, CLEAR_FIELD]],
+	];
+	for (const [slug, label, field, overrides, expected] of cases) {
+		const { pi } = registered(slug, { baseUrl: "https://code.verboo.ai/router/v1", ...(overrides === undefined ? {} : { modelOverrides: overrides as never }) });
+		const ctx = new FakeCommandContext([], [VERBOO, GLM, field, undefined], { verboo: [GLM_MODEL] });
+		await pi.command("providers-settings", "", ctx);
+		assertEq(JSON.stringify(ctx.offers[3]), JSON.stringify(expected), label);
+	}
 });
 
 test("the choices title carries the current value", async () => {
@@ -206,51 +230,11 @@ test("a JSON field saves the parsed object", async () => {
 	assertEq(JSON.stringify(store.all().verboo.modelOverrides?.["glm-5.2"]?.headers), JSON.stringify({ "X-Tier": "fast" }));
 });
 
-test("invalid JSON warns and records nothing", async () => {
-	const { pi, store } = registered("settings-json-invalid");
-	const ctx = new FakeCommandContext(["{oops"], [VERBOO, GLM, "headers", EDIT], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(store.all().verboo.modelOverrides, undefined);
-	assertEq(ctx.lastMessage, "headers expects valid JSON");
-});
-
-test("JSON in the wrong shape is refused by the catalog's rules", async () => {
-	const { pi, store } = registered("settings-json-shape");
-	const ctx = new FakeCommandContext(['{"X-Tier":1}'], [VERBOO, GLM, "headers", EDIT], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(store.all().verboo.modelOverrides, undefined);
-	assertEq(ctx.notifications.at(-1)?.type, "warning");
-	assertEq(ctx.lastMessage.includes("headers.X-Tier"), true);
-});
-
 test("the modality select saves the pi modalities", async () => {
 	const { pi, store } = registered("settings-input");
 	const ctx = new FakeCommandContext([], [VERBOO, GLM, "input", "text, image"], { verboo: [GLM_MODEL] });
 	await pi.command("providers-settings", "", ctx);
 	assertEq(JSON.stringify(store.all().verboo.modelOverrides?.["glm-5.2"]?.input), JSON.stringify(["text", "image"]));
-});
-
-test("clearing one field keeps the rest of the override", async () => {
-	const { pi, store } = registered("settings-clear-field", {
-		baseUrl: "https://code.verboo.ai/router/v1",
-		modelOverrides: { "glm-5.2": { contextWindow: 262144, cost: { input: 5, output: 6 } } },
-	});
-	const ctx = new FakeCommandContext([], [VERBOO, GLM, "cost.input", CLEAR_FIELD], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	const override = store.all().verboo.modelOverrides?.["glm-5.2"];
-	assertEq(override?.contextWindow, 262144);
-	assertEq(JSON.stringify(override?.cost), JSON.stringify({ output: 6 }));
-	assertEq(ctx.lastMessage, "Cleared cost.input for glm-5.2; open /model to apply");
-});
-
-test("clearing the last field drops the override", async () => {
-	const { pi, store } = registered("settings-clear-last", {
-		baseUrl: "https://code.verboo.ai/router/v1",
-		modelOverrides: { "glm-5.2": { contextWindow: 262144 } },
-	});
-	const ctx = new FakeCommandContext([], [VERBOO, GLM, "contextWindow", CLEAR_FIELD], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(store.all().verboo.modelOverrides, undefined);
 });
 
 test("a price tier prompt shows the tiers as JSON, not as objects", async () => {
@@ -270,46 +254,66 @@ test("a JSON prompt shows the registry's effective value", async () => {
 	assertEq(ctx.prompts.at(-1), 'compat (current: {"supportsDeveloperRole":false})');
 });
 
-test("a fallback picker with nothing to offer says so", async () => {
-	const { pi } = registered("settings-fallback-empty");
-	const ctx = new FakeCommandContext([], [VERBOO, GLM, "fallback", "Choose a model"], { verboo: [GLM_MODEL] });
-	ctx.unavailable.add("verboo");
-	await pi.command("providers-settings", "", ctx);
-	assertEq(ctx.lastMessage, "No provider with credentials has a chat model to fall back to");
-});
-
 test("the fallback picker lists providers with a model and saves the pair", async () => {
 	const { pi, store } = registered("settings-fallback", {
 		baseUrl: "https://code.verboo.ai/router/v1",
 	});
-	const other = { id: "m2", name: "M2", reasoning: false, contextWindow: 4096, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
-	const ctx = new FakeCommandContext([], [VERBOO, GLM, "fallback", "Choose a model", FALLBACK_OTHER, "m2 — M2"], { verboo: [GLM_MODEL], other: [other] });
+	const ctx = new FakeCommandContext([], [VERBOO, GLM, "fallback", "Choose a model", FALLBACK_OTHER, "m2 — M2"], { verboo: [GLM_MODEL], other: [OTHER_MODEL] });
 	store.add("other", { baseUrl: "https://other.test/v1" });
 	await pi.command("providers-settings", "", ctx);
 	assertEq(JSON.stringify(store.all().verboo.modelOverrides?.["glm-5.2"]?.fallback), JSON.stringify({ provider: "other", model: "m2" }));
 	assertEq(ctx.offers.some((options) => options.includes(FALLBACK_OTHER)), true);
 });
 
-test("a fallback to the model itself is refused", async () => {
-	const { pi, store } = registered("settings-fallback-self");
-	const ctx = new FakeCommandContext([], [VERBOO, GLM, "fallback", "Choose a model", FALLBACK_VERBOO, GLM], { verboo: [GLM_MODEL] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(store.all().verboo.modelOverrides, undefined);
-	assertEq(ctx.lastMessage, "glm-5.2 cannot fall back to a model that already falls back to it");
-});
-
-test("a fallback that closes a cycle is refused", async () => {
-	const { pi, store } = registered("settings-fallback-cycle", {
-		baseUrl: "https://code.verboo.ai/router/v1",
-		modelOverrides: { "glm-5.2": { contextWindow: 262144 } },
-	});
-	store.add("other", {
-		baseUrl: "https://other.test/v1",
-		modelOverrides: { m2: { fallback: { provider: "verboo", model: "glm-5.2" } } },
-	});
-	const other = { id: "m2", name: "M2", reasoning: false, contextWindow: 4096, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
-	const ctx = new FakeCommandContext([], [VERBOO, GLM, "fallback", "Choose a model", FALLBACK_OTHER, "m2 — M2"], { verboo: [GLM_MODEL], other: [other] });
-	await pi.command("providers-settings", "", ctx);
-	assertEq(JSON.stringify(store.all().verboo.modelOverrides?.["glm-5.2"]), JSON.stringify({ contextWindow: 262144 }));
-	assertEq(ctx.lastMessage.includes("already falls back to it"), true);
+test("the fallback picker refuses a target that cannot serve", async () => {
+	const cases: Array<[string, string, Record<string, unknown> | undefined, boolean, boolean, Array<string | undefined>, unknown, string]> = [
+		[
+			"settings-fallback-empty",
+			"nothing to offer",
+			undefined,
+			false,
+			false,
+			[VERBOO, GLM, "fallback", "Choose a model"],
+			undefined,
+			"No provider with credentials has a chat model to fall back to",
+		],
+		[
+			"settings-fallback-self",
+			"the model itself",
+			undefined,
+			true,
+			false,
+			[VERBOO, GLM, "fallback", "Choose a model", FALLBACK_VERBOO, GLM],
+			undefined,
+			"already falls back to it",
+		],
+		[
+			"settings-fallback-cycle",
+			"a model that falls back to it",
+			{ "glm-5.2": { contextWindow: 262144 } },
+			true,
+			true,
+			[VERBOO, GLM, "fallback", "Choose a model", FALLBACK_OTHER, "m2 — M2"],
+			{ "glm-5.2": { contextWindow: 262144 } },
+			"already falls back to it",
+		],
+	];
+	for (const [slug, label, overrides, available, otherProvider, selections, expected, message] of cases) {
+		const { pi, store } = registered(slug, {
+			baseUrl: "https://code.verboo.ai/router/v1",
+			...(overrides === undefined ? {} : { modelOverrides: overrides as never }),
+		});
+		if (otherProvider) {
+			store.add("other", {
+				baseUrl: "https://other.test/v1",
+				modelOverrides: { m2: { fallback: { provider: "verboo", model: "glm-5.2" } } },
+			});
+		}
+		const known = otherProvider ? { verboo: [GLM_MODEL], other: [OTHER_MODEL] } : { verboo: [GLM_MODEL] };
+		const ctx = new FakeCommandContext([], selections, known);
+		if (!available) ctx.unavailable.add("verboo");
+		await pi.command("providers-settings", "", ctx);
+		assertEq(JSON.stringify(store.all().verboo.modelOverrides), JSON.stringify(expected), label);
+		assertEq(ctx.lastMessage.includes(message), true, label);
+	}
 });

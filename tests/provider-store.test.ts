@@ -12,18 +12,14 @@ test("an absent file means no providers", () => {
 	assertEq(Object.keys(store("store-absent").all()).length, 0);
 });
 
-test("add writes the provider under its id", () => {
+test("add writes each provider under its id and keeps the ones already stored", () => {
 	const providers = store("store-add");
-	providers.add("verboo", { baseUrl: "https://code.verboo.ai/router/v1" });
-	const written = JSON.parse(readFileSync(join(scratchDir(), "store-add", "custom-providers.json"), "utf8"));
-	assertEq(written.providers.verboo.baseUrl, "https://code.verboo.ai/router/v1");
-	assertEq(JSON.stringify(written.providers.verboo), '{"baseUrl":"https://code.verboo.ai/router/v1"}');
-});
-
-test("add keeps the providers already stored", () => {
-	const providers = store("store-keep");
 	providers.add("first", { baseUrl: "https://first.example/v1" });
 	providers.add("second", { name: "Second", baseUrl: "https://second.example/v1" });
+	const written = JSON.parse(readFileSync(join(scratchDir(), "store-add", "custom-providers.json"), "utf8"));
+	assertEq(JSON.stringify(written.providers.first), '{"baseUrl":"https://first.example/v1"}');
+	assertEq(written.providers.second.name, "Second");
+	assertEq(written.providers.second.baseUrl, "https://second.example/v1");
 	const stored = providers.all();
 	assertEq(Object.keys(stored).join(","), "first,second");
 	assertEq(stored.second.name, "Second");

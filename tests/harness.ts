@@ -97,15 +97,16 @@ export function assertEq<T>(actual: T, expected: T, message?: string): void {
 	}
 }
 
-export async function assertRejects(fn: () => Promise<unknown>, expected: string): Promise<void> {
+export async function assertRejects(fn: () => Promise<unknown>, expected: string, label?: string): Promise<void> {
+	const where = label === undefined ? "" : `${label} — `;
 	try {
 		await fn();
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		if (!message.includes(expected)) throw new Error(`expected ${expected}, got ${message}`);
+		if (!message.includes(expected)) throw new Error(`${where}expected ${expected}, got ${message}`);
 		return;
 	}
-	throw new Error("expected a rejection");
+	throw new Error(`${where}expected a rejection`);
 }
 
 export function assertThrows(fn: () => unknown, expected: string): void {
