@@ -179,34 +179,28 @@ test("an error after content is never replayed on the fallback", async () => {
 	assertEq(ctx.served.length, 0);
 });
 
-test("a cancel is not a provider failure", async () => {
-	reset();
-	primary.push([{ type: "error", reason: "aborted", error: assistant("verboo", "a", "aborted") }]);
-	const { ctx, failover } = await forward("failover-abort", { modelOverrides: { a: { fallback: { provider: "other", model: "b" } } } });
-	ctx.registry.set("other/b", model("other", "b"));
-	const events = await collect(failover.stream(model("verboo", "a") as never, {} as never, {}));
-	assertEq(JSON.stringify(events.map((event) => event.type)), JSON.stringify(["error"]));
-	assertEq(ctx.served.length, 0);
-});
-
-test("an already aborted signal is not a provider failure", async () => {
-	reset();
-	primary.push([start("verboo", "a"), failed("verboo", "a", "boom")]);
-	const { ctx, failover } = await forward("failover-signal", { modelOverrides: { a: { fallback: { provider: "other", model: "b" } } } });
-	ctx.registry.set("other/b", model("other", "b"));
-	const controller = new AbortController();
-	controller.abort();
-	await collect(failover.stream(model("verboo", "a") as never, {} as never, { signal: controller.signal }));
-	assertEq(ctx.served.length, 0);
-});
-
-test("a context overflow is pi's to compact, not the fallback's", async () => {
-	reset();
-	primary.push([start("verboo", "a"), failed("verboo", "a", "prompt is too long: 213462 tokens > 200000 maximum")]);
-	const { ctx, failover } = await forward("failover-overflow", { modelOverrides: { a: { fallback: { provider: "other", model: "b" } } } });
-	ctx.registry.set("other/b", model("other", "b"));
-	await collect(failover.stream(model("verboo", "a") as never, {} as never, {}));
-	assertEq(ctx.served.length, 0);
+test("only a provider failure before content reaches the fallback", async () => {
+	const cases: Array<[string, unknown[], boolean, string[]]> = [
+		["a cancel", [{ type: "error", reason: "aborted", error: assistant("verboo", "a", "aborted") }], false, ["error"]],
+		["an already aborted signal", [start("verboo", "a"), failed("verboo", "a", "boom")], true, ["start", "error"]],
+		[
+			"a context overflow",
+			[start("verboo", "a"), failed("verboo", "a", "prompt is too long: 213462 tokens > 200000 maximum")],
+			false,
+			["start", "error"],
+		],
+	];
+	for (const [label, script, aborted, expected] of cases) {
+		reset();
+		primary.push(script);
+		const { ctx, failover } = await forward(`failover-guard-${label.replace(/\W+/g, "-")}`, { modelOverrides: { a: { fallback: { provider: "other", model: "b" } } } });
+		ctx.registry.set("other/b", model("other", "b"));
+		const controller = new AbortController();
+		if (aborted) controller.abort();
+		const events = await collect(failover.stream(model("verboo", "a") as never, {} as never, aborted ? { signal: controller.signal } : {}));
+		assertEq(JSON.stringify(events.map((event) => event.type)), JSON.stringify(expected), label);
+		assertEq(ctx.served.length, 0, label);
+	}
 });
 
 test("a fallback that is missing or has no credentials reports why and keeps the error", async () => {

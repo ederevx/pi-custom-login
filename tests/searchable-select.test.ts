@@ -20,20 +20,18 @@ function screen(entries: readonly SearchableEntry[], answers: Array<string | und
 }
 
 test("typing narrows the list to the fuzzy matches", async () => {
-	const { select } = screen([model("glm-5.2", "GLM 5.2"), model("m2", "M2")], []);
-	for (const key of ["g", "l", "m"]) select.handleInput(key);
-	const lines = select.render(80).join("\n");
-	assertEq(lines.includes("glm-5.2"), true);
-	assertEq(lines.includes("m2 — M2"), false);
-	assertEq(lines.includes("Enter a model id"), true);
-});
-
-test("a provider-prefixed query matches through both tokens", async () => {
-	const { select } = screen([model("glm-5.2", "GLM 5.2"), model("m2", "M2")], []);
-	for (const key of "verboo/glm") select.handleInput(key);
-	const lines = select.render(80).join("\n");
-	assertEq(lines.includes("glm-5.2"), true);
-	assertEq(lines.includes("m2 — M2"), false);
+	const cases: Array<[string, string]> = [
+		["a fuzzy prefix", "glm"],
+		["a provider-prefixed query", "verboo/glm"],
+	];
+	for (const [label, keys] of cases) {
+		const { select } = screen([model("glm-5.2", "GLM 5.2"), model("m2", "M2")], []);
+		for (const key of keys) select.handleInput(key);
+		const lines = select.render(80).join("\n");
+		assertEq(lines.includes("glm-5.2"), true, label);
+		assertEq(lines.includes("m2 — M2"), false, label);
+		assertEq(lines.includes("Enter a model id"), true, label);
+	}
 });
 
 test("enter answers with the highlighted model", async () => {

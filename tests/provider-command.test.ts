@@ -31,30 +31,33 @@ test("add asks for what the arguments left out", async () => {
 	assertEq(pi.providers.get("asked")?.baseUrl, "https://asked.example/v1");
 });
 
-test("add refuses a registration without a URL", async () => {
-	const { pi } = subject("command-no-url");
-	const ctx = new FakeCommandContext([undefined, undefined]);
-	await pi.command("providers", "add", ctx);
-	assertEq(pi.providers.size, 0);
-	assertEq(ctx.notifications.at(-1)?.type, "warning");
+test("add refuses a registration it cannot complete", async () => {
+	const cases: Array<[string, string, string, Array<string | undefined>, string?]> = [
+		["command-no-url", "a missing URL", "add", [undefined, undefined]],
+		["command-key-argument", "a key argument", "add proxy https://proxy.example/v1 sk-live-abc", [], "Keys are stored by /login <id>, not by /providers add"],
+	];
+	for (const [slug, label, args, answers, message] of cases) {
+		const { pi, store } = subject(slug);
+		const ctx = new FakeCommandContext(answers);
+		await pi.command("providers", args, ctx);
+		assertEq(pi.providers.size, 0, label);
+		assertEq(Object.keys(store.all()).length, 0, label);
+		assertEq(ctx.notifications.at(-1)?.type, "warning", label);
+		if (message !== undefined) assertEq(ctx.lastMessage, message, label);
+	}
 });
 
-test("add refuses a key argument and records nothing", async () => {
-	const { pi, store } = subject("command-key-argument");
-	const ctx = new FakeCommandContext();
-	await pi.command("providers", "add proxy https://proxy.example/v1 sk-live-abc", ctx);
-	assertEq(pi.providers.size, 0);
-	assertEq(Object.keys(store.all()).length, 0);
-	assertEq(ctx.notifications.at(-1)?.type, "warning");
-	assertEq(ctx.lastMessage, "Keys are stored by /login <id>, not by /providers add");
-});
-
-test("re-adding an id replaces its registration", async () => {
-	const { pi } = subject("command-replace");
-	await pi.command("providers", "add verboo https://old.example/v1", new FakeCommandContext());
+test("re-adding an id replaces its registration and keeps its model overrides", async () => {
+	const { pi, store } = subject("command-replace");
+	store.add("verboo", {
+		baseUrl: "https://old.example/v1",
+		modelOverrides: { "glm-5.2": { contextWindow: 262144 } },
+	});
 	await pi.command("providers", "add verboo https://code.verboo.ai/router/v1", new FakeCommandContext());
 	assertEq(pi.unregistered.at(-1), "verboo");
 	assertEq(pi.providers.get("verboo")?.baseUrl, "https://code.verboo.ai/router/v1");
+	assertEq(store.all().verboo.baseUrl, "https://code.verboo.ai/router/v1");
+	assertEq(store.all().verboo.modelOverrides?.["glm-5.2"]?.contextWindow, 262144);
 });
 
 test("remove unregisters and forgets the provider", async () => {
@@ -66,12 +69,18 @@ test("remove unregisters and forgets the provider", async () => {
 	assertEq(Object.keys(store.all()).length, 0);
 });
 
-test("remove without an id only explains itself", async () => {
-	const { pi } = subject("command-remove-usage");
-	const ctx = new FakeCommandContext();
-	await pi.command("providers", "remove", ctx);
-	assertEq(ctx.notifications.at(-1)?.type, "warning");
-	assertEq(ctx.lastMessage.startsWith("Usage:"), true);
+test("a removal without an id and an unknown action print the usage", async () => {
+	const cases: Array<[string, string, string, string]> = [
+		["command-remove-usage", "a removal without an id", "remove", "Usage:"],
+		["command-unknown", "an unknown action", "edit first", "add <id> <baseUrl>"],
+	];
+	for (const [slug, label, args, usage] of cases) {
+		const { pi } = subject(slug);
+		const ctx = new FakeCommandContext();
+		await pi.command("providers", args, ctx);
+		assertEq(ctx.notifications.at(-1)?.type, "warning", label);
+		assertEq(ctx.lastMessage.includes(usage), true, label);
+	}
 });
 
 test("list reports the stored providers and an empty store", async () => {
@@ -83,26 +92,4 @@ test("list reports the stored providers and an empty store", async () => {
 	const filled = new FakeCommandContext();
 	await pi.command("providers", "list", filled);
 	assertEq(filled.lastMessage, "first https://first.example/v1");
-});
-
-test("an unknown action prints the usage", async () => {
-	const { pi } = subject("command-unknown");
-	const ctx = new FakeCommandContext();
-	await pi.command("providers", "edit first", ctx);
-	assertEq(ctx.notifications.at(-1)?.type, "warning");
-	assertEq(ctx.lastMessage.includes("add <id> <baseUrl>"), true);
-});
-
-test("re-adding an id keeps its model overrides", async () => {
-	const pi = new FakePi();
-	const store = new ProviderStore(`${scratchDir()}/command-readd-overrides`);
-	new ProviderCommand(pi.extension(), store, new ProviderRegistry(pi.extension(), new ModelFailover(pi.extension(), store))).register();
-	store.add("verboo", {
-		baseUrl: "https://old.example/v1",
-		modelOverrides: { "glm-5.2": { contextWindow: 262144 } },
-	});
-	await pi.command("providers", "add verboo https://code.verboo.ai/router/v1", new FakeCommandContext());
-	const entry = store.all().verboo;
-	assertEq(entry.baseUrl, "https://code.verboo.ai/router/v1");
-	assertEq(entry.modelOverrides?.["glm-5.2"]?.contextWindow, 262144);
 });

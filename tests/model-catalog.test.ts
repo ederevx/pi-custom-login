@@ -101,20 +101,22 @@ test("a catalog maps the fields pi needs", async () => {
 	assertEq(typeof capture.persisted?.checkedAt, "number");
 });
 
-test("offline keeps the stored list without a request", async () => {
-	respondWith({ data: [] });
-	const stored = [{ id: "stored" }] as never;
-	const models = await new ModelCatalog(ENTRY).models(context({ stored: { models: stored }, allowNetwork: false }));
-	assertEq(models.length, 1);
-	assertEq(JSON.stringify(models.map((model) => model.compat)), JSON.stringify([{ supportsDeveloperRole: false }]));
-	assertEq(capture.requests, 0);
-});
-
-test("no credential returns the stored list and asks no server", async () => {
-	respondWith({ data: [] });
-	const models = await new ModelCatalog(ENTRY).models(context());
-	assertEq(models.length, 0);
-	assertEq(capture.requests, 0);
+test("an offline or credential-less catalog keeps the stored list and asks no server", async () => {
+	const cases: Array<[string, readonly unknown[], Partial<CatalogRefreshContext>, number]> = [
+		["an offline catalog", [{ id: "stored" }], { allowNetwork: false }, 1],
+		["a catalog with no credential", [], {}, 0],
+	];
+	for (const [label, stored, overrides, expected] of cases) {
+		respondWith({ data: [] });
+		const models = await new ModelCatalog(ENTRY).models(context({ stored: { models: stored as never }, ...overrides }));
+		assertEq(models.length, expected, label);
+		assertEq(
+			JSON.stringify(models.map((model) => model.compat)),
+			JSON.stringify(models.map(() => ({ supportsDeveloperRole: false }))),
+			label,
+		);
+		assertEq(capture.requests, 0, label);
+	}
 });
 
 test("a failed catalog rejects and persists nothing", async () => {
@@ -194,43 +196,167 @@ test("an ollama-shaped catalog takes missing metadata from its top-level models 
 	assertEq(JSON.stringify(capture.persisted?.models.map((model) => "compat" in model)), JSON.stringify([false, false, false]));
 });
 
+test("a catalog shape supplies every model field pi wants", async () => {
+	const cases: Array<[string, unknown, unknown]> = [
+		[
+			"the OpenCode Go shape",
+			{
+				data: [
+					{
+						id: "deepseek-v4.1-flash",
+						name: "DeepSeek V4.1 Flash",
+						limit: { context: 1000000, output: 384000 },
+						modalities: { input: ["text", "image/jpeg", "image/png", "image/gif", "image/webp"], output: ["text"] },
+						capabilities: { reasoning: { supported: true, effort: ["low", "high", "max"] } },
+						cost: { text: { input: { price: 0.15, cache: { read: 0.003, write: 0.0001 } }, output: { price: 0.6 } } },
+					},
+				],
+			},
+			[
+				{
+					id: "deepseek-v4.1-flash",
+					name: "DeepSeek V4.1 Flash",
+					api: "openai-completions",
+					reasoning: true,
+					input: ["text", "image"],
+					contextWindow: 1000000,
+					maxTokens: 384000,
+					cost: { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0.0001 },
+					compat: { supportsDeveloperRole: false },
+				},
+			],
+		],
+		[
+			"the Reka shape",
+			{
+				data: [
+					{
+						id: "qwen/qwen3.6-27b",
+						name: "Qwen3.6 27B",
+						context_length: 262144,
+						max_output_length: 32768,
+						input_modalities: ["text"],
+						supported_features: ["tools", "json_mode", "reasoning"],
+						pricing: { prompt: "0.00000029", completion: "0.00000195" },
+					},
+				],
+			},
+			[
+				{
+					id: "qwen/qwen3.6-27b",
+					name: "Qwen3.6 27B",
+					api: "openai-completions",
+					reasoning: true,
+					input: ["text"],
+					contextWindow: 262144,
+					maxTokens: 32768,
+					cost: { input: 0.29, output: 1.95, cacheRead: 0, cacheWrite: 0 },
+					compat: { supportsDeveloperRole: false },
+				},
+			],
+		],
+	];
+	for (const [label, body, expected] of cases) {
+		respondWith(body);
+		const models = await new ModelCatalog(ENTRY).models(networked());
+		assertEq(JSON.stringify(models), JSON.stringify(expected), label);
+	}
+});
+
 test("metadata for a model the catalog does not list adds nothing", async () => {
 	respondWith({ data: [{ id: "model" }], models: [{ slug: "elsewhere", context_window: 4096 }] });
 	const models = await new ModelCatalog(ENTRY).models(networked());
 	assertEq(JSON.stringify(models.map((model) => model.contextWindow)), JSON.stringify([DEFAULT_CONTEXT_WINDOW]));
 });
 
-test("an OpenAI-shaped entry wins where the metadata disagrees", async () => {
-	respondWith({
-		data: [{ id: "model", display_name: "From entry", context_window: 1000000, max_output_tokens: 32768, vision: false, reasoning: { effort_levels: [] } }],
-		models: [
-			{
-				slug: "model",
-				display_name: "From metadata",
-				context_window: 4096,
-				max_output_tokens: 4096,
-				input_modalities: ["text", "image"],
-				supported_reasoning_levels: [{ effort: "high" }],
-			},
+test("an entry-declared value wins over the metadata and the alternative shape", async () => {
+	const cases: Array<[string, unknown, unknown, unknown[]]> = [
+		[
+			"an OpenAI-shaped entry against disagreeing metadata",
+			{ data: [{ id: "model", display_name: "From entry", context_window: 1000000, max_output_tokens: 32768, vision: false, reasoning: { effort_levels: [] } }] },
+			[
+				{
+					slug: "model",
+					display_name: "From metadata",
+					context_window: 4096,
+					max_output_tokens: 4096,
+					input_modalities: ["text", "image"],
+					supported_reasoning_levels: [{ effort: "high" }],
+				},
+			],
+			["From entry", 1000000, 32768, false, ["text"]],
 		],
-	});
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(
-		JSON.stringify(models.map((model) => [model.name, model.contextWindow, model.maxTokens, model.reasoning, model.input])),
-		JSON.stringify([["From entry", 1000000, 32768, false, ["text"]]]),
-	);
+		[
+			"explicit entry values against contradictory metadata",
+			{ data: [{ id: "model", context_window: 1000000, vision: true, reasoning: { effort_levels: ["high"] } }] },
+			[{ slug: "model", context_window: 262144, max_context_window: 131072 }],
+			["model", 1000000, DEFAULT_MAX_TOKENS, true, ["text", "image"]],
+		],
+		[
+			"metadata fields the entry already supplies",
+			{ data: [{ id: "model", display_name: "Entry", context_window: 1000000, max_output_tokens: 32768, vision: true, reasoning: { effort_levels: ["high"] } }] },
+			[
+				{
+					slug: "model",
+					display_name: 7,
+					context_window: 1.5,
+					max_context_window: 1.5,
+					max_output_tokens: 1.5,
+					input_modalities: "image",
+					supported_reasoning_levels: "high",
+				},
+			],
+			["Entry", 1000000, 32768, true, ["text", "image"]],
+		],
+		[
+			"a declared flat field over an alternative shape",
+			{
+				data: [
+					{
+						id: "m",
+						display_name: "Flat",
+						name: "Nested",
+						context_window: 1000,
+						limit: { context: 2000, output: 300 },
+						max_output_tokens: 100,
+						vision: false,
+						modalities: { input: ["image/png"] },
+						reasoning: { effort_levels: ["high"] },
+						capabilities: { reasoning: { supported: false } },
+						pricing: { prompt: "0.000001" },
+						cost: { text: { input: { price: 9 }, output: { price: 9 } } },
+					},
+				],
+			},
+			undefined,
+			["Flat", 1000, 100, true, ["text"]],
+		],
+	];
+	for (const [label, body, metadata, expected] of cases) {
+		respondWith(metadata === undefined ? body : { ...(body as Record<string, unknown>), models: metadata });
+		const models = await new ModelCatalog(ENTRY).models(networked());
+		assertEq(
+			JSON.stringify(models.map((model) => [model.name, model.contextWindow, model.maxTokens, model.reasoning, model.input])),
+			JSON.stringify([expected]),
+			label,
+		);
+		assertEq(JSON.stringify(capture.persisted?.models.map((model) => "compat" in model)), JSON.stringify([false]), label);
+	}
 });
 
-test("a metadata max_context_window stands in for a missing context_window", async () => {
-	respondWith({ data: [{ id: "model" }], models: [{ slug: "model", max_context_window: 524288 }] });
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models.map((model) => model.contextWindow)), JSON.stringify([524288]));
-});
-
-test("a metadata max_output_tokens supplies a missing output limit", async () => {
-	respondWith({ data: [{ id: "model" }], models: [{ slug: "model", max_output_tokens: 32000 }] });
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models.map((model) => model.maxTokens)), JSON.stringify([32000]));
+test("a missing limit is filled from the metadata, an entry alias, or the ceiling", async () => {
+	const cases: Array<[string, ProviderEntry, unknown, number, number]> = [
+		["metadata max_context_window for a missing context_window", { id: "model" }, [{ slug: "model", max_context_window: 524288 }], 524288, DEFAULT_MAX_TOKENS],
+		["metadata max_output_tokens for a missing output limit", { id: "model" }, [{ slug: "model", max_output_tokens: 32000 }], DEFAULT_CONTEXT_WINDOW, 32000],
+		["an entry-level max_context_window for the window", { id: "m", max_context_window: 4096 }, undefined, 4096, DEFAULT_MAX_TOKENS],
+		["an entry-level ceiling above the indexed window", { id: "model", max_context_window: 400000 }, [{ slug: "model", context_window: 200000 }], 200000, DEFAULT_MAX_TOKENS],
+	];
+	for (const [label, entry, metadata, contextWindow, maxTokens] of cases) {
+		respondWith(metadata === undefined ? { data: [entry] } : { data: [entry], models: metadata });
+		const models = await new ModelCatalog(ENTRY).models(networked());
+		assertEq(models.map((model) => model.contextWindow).join(","), String(contextWindow), label);
+		assertEq(models.map((model) => model.maxTokens).join(","), String(maxTokens), label);
+	}
 });
 
 test("metadata whose context window exceeds its max_context_window rejects", async () => {
@@ -254,21 +380,22 @@ const MALFORMED_METADATA: Array<[string, unknown]> = [
 	["a level without an effort", [{ slug: "model", supported_reasoning_levels: [{ effort: 7 }] }]],
 ];
 
-for (const [description, models] of MALFORMED_METADATA) {
-	test(`a catalog with ${description} rejects before persisting`, async () => {
+test("a malformed models list rejects before persisting", async () => {
+	for (const [label, models] of MALFORMED_METADATA) {
 		respondWith({ data: [{ id: "model" }], models });
-		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "model catalog");
-		assertEq(capture.persisted, undefined);
-	});
-}
+		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "model catalog", label);
+		assertEq(capture.persisted, undefined, label);
+	}
+});
 
-for (const models of [undefined, []]) {
-	test(`a catalog whose models field is ${String(models)} adds no metadata`, async () => {
+test("a models field that is absent or empty adds no metadata", async () => {
+	for (const models of [undefined, []]) {
+		const label = `a models field of ${String(models)}`;
 		respondWith({ data: [{ id: "model" }], models });
-		const models_ = await new ModelCatalog(ENTRY).models(networked());
-		assertEq(JSON.stringify(models_.map((model) => model.contextWindow)), JSON.stringify([DEFAULT_CONTEXT_WINDOW]));
-	});
-}
+		const published = await new ModelCatalog(ENTRY).models(networked());
+		assertEq(JSON.stringify(published.map((model) => model.contextWindow)), JSON.stringify([DEFAULT_CONTEXT_WINDOW]), label);
+	}
+});
 
 test("an empty catalog is valid and replaces the stored list", async () => {
 	respondWith({ object: "list", data: [], models: [] });
@@ -277,58 +404,32 @@ test("an empty catalog is valid and replaces the stored list", async () => {
 	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify([]));
 });
 
-test("metadata with only the none effort supports no reasoning", async () => {
-	respondWith({ data: [{ id: "model" }], models: [{ slug: "model", supported_reasoning_levels: [{ effort: "none" }] }] });
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models.map((model) => model.reasoning)), JSON.stringify([false]));
+test("reasoning is declared only by an explicit flag or a level above none", async () => {
+	const cases: Array<[string, unknown, unknown, boolean]> = [
+		["a true reasoning flag", { id: "m", reasoning: true }, undefined, true],
+		["a false reasoning flag", { id: "m", reasoning: false }, undefined, false],
+		["a true capabilities flag", { id: "m", capabilities: { reasoning: true } }, undefined, true],
+		["capabilities.reasoning without levels or a supported flag", { id: "m", capabilities: { reasoning: {} } }, undefined, false],
+		["metadata with only the none effort", { id: "model" }, [{ slug: "model", supported_reasoning_levels: [{ effort: "none" }] }], false],
+		["a feature list without reasoning against a supplementary effort", { id: "model", supported_features: [] }, [{ slug: "model", supported_reasoning_levels: [{ effort: "high" }] }], false],
+	];
+	for (const [label, entry, metadata, reasoning] of cases) {
+		respondWith(metadata === undefined ? { data: [entry] } : { data: [entry], models: metadata });
+		const models = await new ModelCatalog(ENTRY).models(networked());
+		assertEq(models[0].reasoning, reasoning, label);
+	}
 });
 
-test("explicit entry values leave contradictory metadata unread", async () => {
-	respondWith({
-		data: [{ id: "model", context_window: 1000000, vision: true, reasoning: { effort_levels: ["high"] } }],
-		models: [{ slug: "model", context_window: 262144, max_context_window: 131072 }],
-	});
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(
-		JSON.stringify(models.map((model) => [model.contextWindow, model.reasoning, model.input])),
-		JSON.stringify([[1000000, true, ["text", "image"]]]),
-	);
-	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))));
-});
-
-test("a blank metadata display name falls back to the id", async () => {
-	respondWith({ data: [{ id: "model" }], models: [{ slug: "model", display_name: "   " }] });
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models.map((model) => model.name)), JSON.stringify(["model"]));
-});
-
-test("an explicit blank entry name wins over a metadata name", async () => {
-	respondWith({ data: [{ id: "model", display_name: "" }], models: [{ slug: "model", display_name: "From metadata" }] });
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models.map((model) => model.name)), JSON.stringify([""]));
-});
-
-test("metadata fields the entry already supplies are never validated", async () => {
-	respondWith({
-		data: [{ id: "model", display_name: "Entry", context_window: 1000000, max_output_tokens: 32768, vision: true, reasoning: { effort_levels: ["high"] } }],
-		models: [
-			{
-				slug: "model",
-				display_name: 7,
-				context_window: 1.5,
-				max_context_window: 1.5,
-				max_output_tokens: 1.5,
-				input_modalities: "image",
-				supported_reasoning_levels: "high",
-			},
-		],
-	});
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(
-		JSON.stringify(models.map((model) => [model.name, model.contextWindow, model.maxTokens, model.reasoning, model.input])),
-		JSON.stringify([["Entry", 1000000, 32768, true, ["text", "image"]]]),
-	);
-	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))));
+test("a model name falls back to the id only where nothing names it", async () => {
+	const cases: Array<[string, unknown, string]> = [
+		["a blank metadata display name", { data: [{ id: "model" }], models: [{ slug: "model", display_name: "   " }] }, "model"],
+		["an explicit blank entry name over a metadata name", { data: [{ id: "model", display_name: "" }], models: [{ slug: "model", display_name: "From metadata" }] }, ""],
+	];
+	for (const [label, body, name] of cases) {
+		respondWith(body);
+		const models = await new ModelCatalog(ENTRY).models(networked());
+		assertEq(JSON.stringify(models.map((model) => model.name)), JSON.stringify([name]), label);
+	}
 });
 
 test("a duplicate model id rejects before persisting", async () => {
@@ -347,153 +448,145 @@ test("a valid model ahead of an invalid metadata entry publishes nothing", async
 });
 
 test("catalog token prices become per-million costs", async () => {
-	respondWith({
-		data: [
+	const cases: Array<[string, unknown, unknown[]]> = [
+		[
+			"a priced and an unpriced model",
 			{
-				id: "priced",
-				pricing: {
-					prompt: "0.000001",
-					completion: "0.000002",
-					input_cache_read: "0.0000005",
-					input_cache_write: "0.00000125",
-					overrides: [{ min_prompt_tokens: 100, prompt: "1" }],
-				},
+				data: [
+					{
+						id: "priced",
+						pricing: {
+							prompt: "0.000001",
+							completion: "0.000002",
+							input_cache_read: "0.0000005",
+							input_cache_write: "0.00000125",
+							overrides: [{ min_prompt_tokens: 100, prompt: "1" }],
+						},
+					},
+					{ id: "unpriced" },
+				],
 			},
-			{ id: "unpriced" },
+			[
+				{ input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1.25 },
+				{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			],
 		],
-	});
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models.map((model) => model.cost)), JSON.stringify([
-		{ input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1.25 },
-		{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	]));
-	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))));
-});
-
-test("partial pricing preserves supplied costs", async () => {
-	respondWith({ data: [{ id: "partial", pricing: { completion: "0.000002" } }] });
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models[0].cost), JSON.stringify({
-		input: 0, output: 2, cacheRead: 0, cacheWrite: 0,
-	}));
-});
-
-test("a cache write priced per retention window supplies no fixed cost", async () => {
-	respondWith({
-		data: [{
-			id: "windowed",
-			cost: {
-				text: {
-					input: { price: 1, cache: { read: 0.5, write: { "30m": 0.125, "12h": 0.25 } } },
-					output: { price: 2 },
-				},
+		[
+			"a cache write priced per retention window",
+			{
+				data: [{
+					id: "windowed",
+					cost: {
+						text: {
+							input: { price: 1, cache: { read: 0.5, write: { "30m": 0.125, "12h": 0.25 } } },
+							output: { price: 2 },
+						},
+					},
+				}],
 			},
-		}],
-	});
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models[0].cost), JSON.stringify({
-		input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0,
-	}));
-	assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))));
+			[{ input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0 }],
+		],
+	];
+	for (const [label, body, expected] of cases) {
+		respondWith(body);
+		const models = await new ModelCatalog(ENTRY).models(networked());
+		assertEq(JSON.stringify(models.map((model) => model.cost)), JSON.stringify(expected), label);
+		assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))), label);
+	}
 });
 
-for (const write of [{}, { "30m": -1 }, { "30m": "0.125" }, []]) {
-	test(`a cache write ${JSON.stringify(write)} rejects`, async () => {
-		respondWith({
-			data: [{ id: "valid" }, { id: "bad", cost: { text: { input: { cache: { write } } } } }],
-		});
-		await assertRejects(
-			() => new ModelCatalog(ENTRY).models(networked()),
-			"has an invalid cost.text.input.cache.write",
-		);
-		assertEq(capture.persisted, undefined);
-	});
-}
-
-for (const pricing of [null, [], "0"]) {
-	test(`invalid pricing ${JSON.stringify(pricing)} rejects`, async () => {
-		respondWith({ data: [{ id: "valid" }, { id: "bad", pricing }] });
-		await assertRejects(
-			() => new ModelCatalog(ENTRY).models(networked()),
-			"has an invalid pricing",
-		);
-		assertEq(capture.persisted, undefined);
-	});
-}
-
-for (const field of ["prompt", "completion", "input_cache_read", "input_cache_write"]) {
-	for (const value of [0.3, -1, null, true, {}, [], "", " ", "-2", "-1.0", "1e-6", "0x10", "oops", "9".repeat(400)]) {
-		test(`invalid pricing.${field} ${JSON.stringify(value)} rejects`, async () => {
-			respondWith({
-				data: [{ id: "valid" }, { id: "bad", pricing: { [field]: value } }],
-			});
-			await assertRejects(
-				() => new ModelCatalog(ENTRY).models(networked()),
-				"model catalog",
-			);
-			assertEq(capture.persisted, undefined);
-		});
-	}
-}
-
-test("price sentinels preserve the catalog and other prices", async () => {
+test("partial pricing and price sentinels preserve the prices supplied", async () => {
+	const cases: Array<[string, unknown, unknown[]]> = [
+		[
+			"only one price supplied",
+			{ data: [{ id: "partial", pricing: { completion: "0.000002" } }] },
+			[{ input: 0, output: 2, cacheRead: 0, cacheWrite: 0 }],
+		],
+	];
 	for (const [field, costField] of [
 		["prompt", "input"],
 		["completion", "output"],
 		["input_cache_read", "cacheRead"],
 		["input_cache_write", "cacheWrite"],
 	] as const) {
-		respondWith({
-			data: [
-				{
-					id: "variable",
-					pricing: {
-						prompt: "0.000001",
-						completion: "0.000002",
-						input_cache_read: "0.0000005",
-						input_cache_write: "0.00000125",
-						[field]: "-1",
+		const variable = { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1.25 };
+		variable[costField] = 0;
+		cases.push([
+			`the ${field} sentinel`,
+			{
+				data: [
+					{
+						id: "variable",
+						pricing: {
+							prompt: "0.000001",
+							completion: "0.000002",
+							input_cache_read: "0.0000005",
+							input_cache_write: "0.00000125",
+							[field]: "-1",
+						},
 					},
-				},
-				{ id: "zero", pricing: { prompt: "0" } },
-			],
-		});
+					{ id: "zero", pricing: { prompt: "0" } },
+				],
+			},
+			[variable, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }],
+		]);
+	}
+	for (const [label, body, expected] of cases) {
+		respondWith(body);
 		const models = await new ModelCatalog(ENTRY).models(networked());
-		const expected = {
-			input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1.25,
-		};
-		expected[costField] = 0;
-		assertEq(models.length, 2);
-		assertEq(JSON.stringify(models[0].cost), JSON.stringify(expected));
-		assertEq(models[1].cost.input, 0);
-		assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))));
+		assertEq(JSON.stringify(models.map((model) => model.cost)), JSON.stringify(expected), label);
+		assertEq(JSON.stringify(capture.persisted?.models), JSON.stringify(models.map((model) => ({ ...model, compat: undefined }))), label);
 	}
 });
 
-const UNUSABLE_LIMITS = [1.5, Number.MAX_SAFE_INTEGER + 1];
+test("a cache write the catalog cannot read rejects before persisting", async () => {
+	for (const write of [{}, { "30m": -1 }, { "30m": "0.125" }, []]) {
+		const label = `a cache write of ${JSON.stringify(write)}`;
+		respondWith({
+			data: [{ id: "valid" }, { id: "bad", cost: { text: { input: { cache: { write } } } } }],
+		});
+		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "has an invalid cost.text.input.cache.write", label);
+		assertEq(capture.persisted, undefined, label);
+	}
+});
 
-for (const value of UNUSABLE_LIMITS) {
-	test(`an entry limit of ${value} rejects before persisting`, async () => {
-		respondWith({ data: [{ id: "model", max_output_tokens: value }] });
-		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "has an invalid max_output_tokens");
-		assertEq(capture.persisted, undefined);
-	});
+test("a pricing value that is not an object rejects before persisting", async () => {
+	for (const pricing of [null, [], "0"]) {
+		const label = `pricing ${JSON.stringify(pricing)}`;
+		respondWith({ data: [{ id: "valid" }, { id: "bad", pricing }] });
+		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "has an invalid pricing", label);
+		assertEq(capture.persisted, undefined, label);
+	}
+});
 
-	test(`a metadata limit of ${value} rejects before persisting`, async () => {
-		respondWith({ data: [{ id: "model" }], models: [{ slug: "model", max_output_tokens: value }] });
-		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "has an invalid max_output_tokens");
-		assertEq(capture.persisted, undefined);
-	});
-}
+test("a pricing number the catalog cannot convert rejects before persisting", async () => {
+	const fields = ["prompt", "completion", "input_cache_read", "input_cache_write"];
+	const values: unknown[] = [0.3, -1, null, true, {}, [], "", " ", "-2", "-1.0", "1e-6", "0x10", "oops", "9".repeat(400)];
+	for (const field of fields) {
+		for (const value of values) {
+			const label = `pricing.${field} ${JSON.stringify(value)}`;
+			respondWith({ data: [{ id: "valid" }, { id: "bad", pricing: { [field]: value } }] });
+			await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "model catalog", label);
+			assertEq(capture.persisted, undefined, label);
+		}
+	}
+});
 
-
-for (const value of [0, -1, "32768", null, true, {}, [], NaN, Infinity]) {
-	test(`a catalog with max_output_tokens ${String(value)} rejects before persisting`, async () => {
-		respondWith({ data: [{ id: "valid" }, { id: "model", max_output_tokens: value }] });
-		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "Verboo: model catalog has an invalid max_output_tokens");
-		assertEq(capture.persisted, undefined);
-	});
-}
+test("a limit the catalog cannot use rejects before persisting", async () => {
+	const cases: Array<[string, unknown, unknown]> = [];
+	for (const value of [1.5, Number.MAX_SAFE_INTEGER + 1]) {
+		cases.push([`an entry limit of ${value}`, { data: [{ id: "model", max_output_tokens: value }] }, undefined]);
+		cases.push([`a metadata limit of ${value}`, { data: [{ id: "model" }] }, [{ slug: "model", max_output_tokens: value }]]);
+	}
+	for (const value of [0, -1, "32768", null, true, {}, [], NaN, Infinity]) {
+		cases.push([`max_output_tokens ${String(value)}`, { data: [{ id: "valid" }, { id: "model", max_output_tokens: value }] }, undefined]);
+	}
+	for (const [label, body, models] of cases) {
+		respondWith(models === undefined ? body : { ...(body as Record<string, unknown>), models });
+		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "has an invalid max_output_tokens", label);
+		assertEq(capture.persisted, undefined, label);
+	}
+});
 
 const VALID = { id: "valid" };
 const MALFORMED: Array<[string, unknown]> = [
@@ -508,36 +601,41 @@ const MALFORMED: Array<[string, unknown]> = [
 	["a valid entry ahead of a bad one", [VALID, { id: "model", vision: null }]],
 ];
 
-for (const [description, data] of MALFORMED) {
-	test(`a catalog with ${description} rejects before persisting`, async () => {
+test("a malformed catalog entry rejects before persisting", async () => {
+	for (const [label, data] of MALFORMED) {
 		respondWith({ data });
-		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "model catalog");
-		assertEq(capture.persisted, undefined);
-	});
-}
+		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), "model catalog", label);
+		assertEq(capture.persisted, undefined, label);
+	}
+});
 
 const FALLBACKS: Array<[string, number]> = [
 	[CONTEXT_WINDOW_VARIABLE, 131072],
 	[MAX_TOKENS_VARIABLE, 16384],
 ];
 
-for (const [variable, builtin] of FALLBACKS) {
-	for (const value of ["0", "-1", "abc", "", "1.5", " 16384", "1e5", String(Number.MAX_SAFE_INTEGER + 1)]) {
-		test(`${variable}=${JSON.stringify(value)} stops the extension loading`, () => {
+test("an invalid limit variable stops the extension loading", async () => {
+	for (const [variable] of FALLBACKS) {
+		for (const value of ["0", "-1", "abc", "", "1.5", " 16384", "1e5", String(Number.MAX_SAFE_INTEGER + 1)]) {
+			const label = `${variable}=${JSON.stringify(value)}`;
 			const loaded = loadFresh(variable, value);
-			assertEq(loaded.status !== 0, true, `${variable}=${value} loaded anyway`);
-			assertEq(loaded.stderr.includes(`${variable} is set but invalid`), true, loaded.stderr.slice(-300));
-		});
+			assertEq(loaded.status !== 0, true, `${label} loaded anyway`);
+			assertEq(loaded.stderr.includes(`${variable} is set but invalid`), true, `${label} — ${loaded.stderr.slice(-300)}`);
+		}
 	}
+});
 
-	test(`${variable} unset uses the built-in limit`, () => {
-		assertEq(loadFresh(variable, undefined).limits[variable], builtin);
-	});
+test("an unset limit variable uses the built-in limit", async () => {
+	for (const [variable, builtin] of FALLBACKS) {
+		assertEq(loadFresh(variable, undefined).limits[variable], builtin, variable);
+	}
+});
 
-	test(`${variable} replaces the built-in limit`, () => {
-		assertEq(loadFresh(variable, "4096").limits[variable], 4096);
-	});
-}
+test("a limit variable replaces the built-in limit", async () => {
+	for (const [variable] of FALLBACKS) {
+		assertEq(loadFresh(variable, "4096").limits[variable], 4096, variable);
+	}
+});
 
 test("an override wins over the catalog while the raw list is persisted", async () => {
 	respondWith({
@@ -654,48 +752,50 @@ test("a compat override layers over the developer-role baseline", async () => {
 	assertEq(JSON.stringify(flipped[1].compat), JSON.stringify({ supportsDeveloperRole: true }));
 });
 
-for (const [description, override] of [
-	["a non-string name", { name: 7 }],
-	["a blank name", { name: "   " }],
-	["a non-boolean reasoning", { reasoning: "yes" }],
-	["a non-integer context window", { contextWindow: 1.5 }],
-	["a non-positive max tokens", { maxTokens: 0 }],
-	["a negative cost", { cost: { input: -1 } }],
-	["a non-number cost", { cost: { output: "3" } }],
-	["an unknown key", { turbo: true }],
-	["an unknown cost key", { cost: { tax: 1 } }],
-	["a null override", null],
-	["a non-object cost", { cost: 5 }],
-	["an api key", { api: "anthropic-messages" }],
-	["a baseUrl key", { baseUrl: "https://example.test/v1" }],
-	["an input without text", { input: ["image"] }],
-	["an unknown modality", { input: ["text", "audio"] }],
-	["a duplicated modality", { input: ["text", "text"] }],
-	["a tier missing a price", { cost: { tiers: [{ inputTokensAbove: 0, input: 1, output: 1, cacheRead: 0 }] } }],
-	["a negative tier threshold", { cost: { tiers: [{ inputTokensAbove: -1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }] } }],
-	["a non-array tier list", { cost: { tiers: {} } }],
-	["an unknown input limit", { inputLimits: { maxOutputBytes: 1 } }],
-	["a zero image limit", { inputLimits: { images: { maxPerRequest: 0 } } }],
-	["an unknown resize limit", { inputLimits: { images: { resize: { maxDepth: 1 } } } }],
-	["a non-string header", { headers: { "X-Tier": 1 } }],
-	["a numeric thinking level", { thinkingLevelMap: { high: 2 } }],
-	["a non-object sampling params", { samplingParams: 5 }],
-	["a non-object sampling params level", { samplingParamsByThinkingLevel: { high: "top_p" } }],
-	["a negative prompt cache lifetime", { promptCache: { short: -1 } }],
-	["a non-object compat", { compat: "fast" }],
-	["a prompt cache tier pi does not define", { promptCache: { medium: 60 } }],
-	["a fallback without a model", { fallback: { provider: "other" } }],
-	["a blank fallback provider", { fallback: { provider: " ", model: "b" } }],
-	["a fallback with an extra key", { fallback: { provider: "other", model: "b", api: "x" } }],
-] as Array<[string, unknown]>) {
-	test(`an override with ${description} rejects before any request`, async () => {
+test("an override the catalog refuses rejects before any request", async () => {
+	const cases: Array<[string, unknown]> = [
+		["a non-string name", { name: 7 }],
+		["a blank name", { name: "   " }],
+		["a non-boolean reasoning", { reasoning: "yes" }],
+		["a non-integer context window", { contextWindow: 1.5 }],
+		["a non-positive max tokens", { maxTokens: 0 }],
+		["a negative cost", { cost: { input: -1 } }],
+		["a non-number cost", { cost: { output: "3" } }],
+		["an unknown key", { turbo: true }],
+		["an unknown cost key", { cost: { tax: 1 } }],
+		["a null override", null],
+		["a non-object cost", { cost: 5 }],
+		["an api key", { api: "anthropic-messages" }],
+		["a baseUrl key", { baseUrl: "https://example.test/v1" }],
+		["an input without text", { input: ["image"] }],
+		["an unknown modality", { input: ["text", "audio"] }],
+		["a duplicated modality", { input: ["text", "text"] }],
+		["a tier missing a price", { cost: { tiers: [{ inputTokensAbove: 0, input: 1, output: 1, cacheRead: 0 }] } }],
+		["a negative tier threshold", { cost: { tiers: [{ inputTokensAbove: -1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }] } }],
+		["a non-array tier list", { cost: { tiers: {} } }],
+		["an unknown input limit", { inputLimits: { maxOutputBytes: 1 } }],
+		["a zero image limit", { inputLimits: { images: { maxPerRequest: 0 } } }],
+		["an unknown resize limit", { inputLimits: { images: { resize: { maxDepth: 1 } } } }],
+		["a non-string header", { headers: { "X-Tier": 1 } }],
+		["a numeric thinking level", { thinkingLevelMap: { high: 2 } }],
+		["a non-object sampling params", { samplingParams: 5 }],
+		["a non-object sampling params level", { samplingParamsByThinkingLevel: { high: "top_p" } }],
+		["a negative prompt cache lifetime", { promptCache: { short: -1 } }],
+		["a non-object compat", { compat: "fast" }],
+		["a prompt cache tier pi does not define", { promptCache: { medium: 60 } }],
+		["a fallback without a model", { fallback: { provider: "other" } }],
+		["a blank fallback provider", { fallback: { provider: " ", model: "b" } }],
+		["a fallback with an extra key", { fallback: { provider: "other", model: "b", api: "x" } }],
+	];
+	for (const [label, override] of cases) {
+		const row = `an override with ${label}`;
 		respondWith({ data: [{ id: "m" }] });
-		const entry: ProviderEntry = { baseUrl: "https://code.verboo.ai/router/v1", modelOverrides: { m: override } };
-		await assertRejects(() => new ModelCatalog(entry).models(networked()), "model catalog");
-		assertEq(capture.requests, 0);
-		assertEq(capture.persisted, undefined);
-	});
-}
+		const entry: ProviderEntry = { baseUrl: "https://code.verboo.ai/router/v1", modelOverrides: { m: override as never } };
+		await assertRejects(() => new ModelCatalog(entry).models(networked()), "model catalog", row);
+		assertEq(capture.requests, 0, row);
+		assertEq(capture.persisted, undefined, row);
+	}
+});
 
 test("a fallback is stored for the failover and never reaches the model", async () => {
 	respondWith({ data: [{ id: "m" }] });
@@ -708,108 +808,6 @@ test("a fallback is stored for the failover and never reaches the model", async 
 	assertEq(JSON.stringify(entry.modelOverrides?.m.fallback), JSON.stringify({ provider: "other", model: "b" }));
 });
 
-test("the OpenCode Go shape supplies every model field pi wants", async () => {
-	respondWith({
-		data: [
-			{
-				id: "deepseek-v4.1-flash",
-				name: "DeepSeek V4.1 Flash",
-				limit: { context: 1000000, output: 384000 },
-				modalities: { input: ["text", "image/jpeg", "image/png", "image/gif", "image/webp"], output: ["text"] },
-				capabilities: { reasoning: { supported: true, effort: ["low", "high", "max"] } },
-				cost: { text: { input: { price: 0.15, cache: { read: 0.003, write: 0.0001 } }, output: { price: 0.6 } } },
-			},
-		],
-	});
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models), JSON.stringify([
-		{
-			id: "deepseek-v4.1-flash",
-			name: "DeepSeek V4.1 Flash",
-			api: "openai-completions",
-			reasoning: true,
-			input: ["text", "image"],
-			contextWindow: 1000000,
-			maxTokens: 384000,
-			cost: { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0.0001 },
-			compat: { supportsDeveloperRole: false },
-		},
-	]));
-});
-
-test("the Reka shape supplies the same facts under other names", async () => {
-	respondWith({
-		data: [
-			{
-				id: "qwen/qwen3.6-27b",
-				name: "Qwen3.6 27B",
-				context_length: 262144,
-				max_output_length: 32768,
-				input_modalities: ["text"],
-				supported_features: ["tools", "json_mode", "reasoning"],
-				pricing: { prompt: "0.00000029", completion: "0.00000195" },
-			},
-		],
-	});
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models), JSON.stringify([
-		{
-			id: "qwen/qwen3.6-27b",
-			name: "Qwen3.6 27B",
-			api: "openai-completions",
-			reasoning: true,
-			input: ["text"],
-			contextWindow: 262144,
-			maxTokens: 32768,
-			cost: { input: 0.29, output: 1.95, cacheRead: 0, cacheWrite: 0 },
-			compat: { supportsDeveloperRole: false },
-		},
-	]));
-});
-
-test("a feature list without reasoning settles it against a supplementary effort", async () => {
-	respondWith({
-		data: [{ id: "model", supported_features: [] }],
-		models: [{ slug: "model", supported_reasoning_levels: [{ effort: "high" }] }],
-	});
-	const models = await new ModelCatalog(ENTRY).models(networked());
-	assertEq(JSON.stringify(models.map((model) => model.reasoning)), JSON.stringify([false]));
-});
-
-test("a declared flat field wins over an alternative shape", async () => {
-	respondWith({
-		data: [
-			{
-				id: "m",
-				display_name: "Flat",
-				name: "Nested",
-				context_window: 1000,
-				limit: { context: 2000, output: 300 },
-				max_output_tokens: 100,
-				vision: false,
-				modalities: { input: ["image/png"] },
-				reasoning: { effort_levels: ["high"] },
-				capabilities: { reasoning: { supported: false } },
-				pricing: { prompt: "0.000001" },
-				cost: { text: { input: { price: 9 }, output: { price: 9 } } },
-			},
-		],
-	});
-	const model = (await new ModelCatalog(ENTRY).models(networked()))[0];
-	assertEq(model.name, "Flat");
-	assertEq(model.contextWindow, 1000);
-	assertEq(model.maxTokens, 100);
-	assertEq(JSON.stringify(model.input), JSON.stringify(["text"]));
-	assertEq(model.reasoning, true);
-	assertEq(JSON.stringify(model.cost), JSON.stringify({ input: 1, output: 0, cacheRead: 0, cacheWrite: 0 }));
-});
-
-test("an entry-level max_context_window stands in for the window", async () => {
-	respondWith({ data: [{ id: "m", max_context_window: 4096 }] });
-	const model = (await new ModelCatalog(ENTRY).models(networked()))[0];
-	assertEq(model.contextWindow, 4096);
-});
-
 test("a malformed shape nothing consumed does not invalidate the entry", async () => {
 	respondWith({ data: [{ id: "m", context_window: 200000, max_output_tokens: 8192, limit: "1M" }] });
 	const model = (await new ModelCatalog(ENTRY).models(networked()))[0];
@@ -817,48 +815,27 @@ test("a malformed shape nothing consumed does not invalidate the entry", async (
 	assertEq(model.maxTokens, 8192);
 });
 
-test("an entry-level ceiling stands below an indexed effective window", async () => {
-	respondWith({ data: [{ id: "model", max_context_window: 400000 }], models: [{ slug: "model", context_window: 200000 }] });
-	const model = (await new ModelCatalog(ENTRY).models(networked()))[0];
-	assertEq(model.contextWindow, 200000);
-});
-
-for (const [description, entry, reasoning] of [
-	["a true reasoning flag", { id: "m", reasoning: true }, true],
-	["a false reasoning flag", { id: "m", reasoning: false }, false],
-	["a true capabilities flag", { id: "m", capabilities: { reasoning: true } }, true],
-] as const) {
-	test(`${description} declares reasoning on its own`, async () => {
+test("an alternative shape the catalog cannot read rejects and persists nothing", async () => {
+	const cases: Array<[string, Record<string, unknown>, string]> = [
+		["a non-object limit", { id: "m", limit: "1M" }, "invalid limit"],
+		["a non-integer limit.context", { id: "m", limit: { context: 1000.5 } }, "invalid context"],
+		["a non-integer context_length", { id: "m", context_length: "262144" }, "invalid context_length"],
+		["a non-positive max_output_length", { id: "m", max_output_length: 0 }, "invalid max_output_length"],
+		["a non-object modalities", { id: "m", modalities: "image" }, "invalid modalities"],
+		["a non-array modalities.input", { id: "m", modalities: { input: "text" } }, "invalid modalities.input"],
+		["a non-object capabilities", { id: "m", capabilities: "reasoning" }, "invalid capabilities"],
+		["a non-object capabilities.reasoning", { id: "m", capabilities: { reasoning: "yes" } }, "invalid capabilities.reasoning"],
+		["a non-string effort list", { id: "m", capabilities: { reasoning: { effort: ["high", 2] } } }, "invalid reasoning effort list"],
+		["a non-boolean supported flag", { id: "m", capabilities: { reasoning: { supported: "yes" } } }, "non-boolean supported"],
+		["a non-array supported_features", { id: "m", supported_features: "reasoning" }, "invalid supported_features"],
+		["a string per-million price", { id: "m", cost: { text: { input: { price: "0.15" } } } }, "invalid cost.text.input.price"],
+		["a negative per-million price", { id: "m", cost: { text: { output: { price: -1 } } } }, "invalid cost.text.output.price"],
+		["a non-object cost", { id: "m", cost: "free" }, "invalid cost"],
+		["a non-string name", { id: "m", name: 7 }, "non-string name"],
+	];
+	for (const [label, entry, problem] of cases) {
 		respondWith({ data: [entry] });
-		assertEq((await new ModelCatalog(ENTRY).models(networked()))[0].reasoning, reasoning);
-	});
-}
-
-test("a capabilities.reasoning without levels and without a supported flag is no reasoning", async () => {
-	respondWith({ data: [{ id: "m", capabilities: { reasoning: {} } }] });
-	assertEq((await new ModelCatalog(ENTRY).models(networked()))[0].reasoning, false);
+		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), problem, `an entry with ${label}`);
+		assertEq(capture.persisted, undefined, label);
+	}
 });
-
-for (const [description, entry, problem] of [
-	["a non-object limit", { id: "m", limit: "1M" }, "invalid limit"],
-	["a non-integer limit.context", { id: "m", limit: { context: 1000.5 } }, "invalid context"],
-	["a non-integer context_length", { id: "m", context_length: "262144" }, "invalid context_length"],
-	["a non-positive max_output_length", { id: "m", max_output_length: 0 }, "invalid max_output_length"],
-	["a non-object modalities", { id: "m", modalities: "image" }, "invalid modalities"],
-	["a non-array modalities.input", { id: "m", modalities: { input: "text" } }, "invalid modalities.input"],
-	["a non-object capabilities", { id: "m", capabilities: "reasoning" }, "invalid capabilities"],
-	["a non-object capabilities.reasoning", { id: "m", capabilities: { reasoning: "yes" } }, "invalid capabilities.reasoning"],
-	["a non-string effort list", { id: "m", capabilities: { reasoning: { effort: ["high", 2] } } }, "invalid reasoning effort list"],
-	["a non-boolean supported flag", { id: "m", capabilities: { reasoning: { supported: "yes" } } }, "non-boolean supported"],
-	["a non-array supported_features", { id: "m", supported_features: "reasoning" }, "invalid supported_features"],
-	["a string per-million price", { id: "m", cost: { text: { input: { price: "0.15" } } } }, "invalid cost.text.input.price"],
-	["a negative per-million price", { id: "m", cost: { text: { output: { price: -1 } } } }, "invalid cost.text.output.price"],
-	["a non-object cost", { id: "m", cost: "free" }, "invalid cost"],
-	["a non-string name", { id: "m", name: 7 }, "non-string name"],
-] as Array<[string, Record<string, unknown>, string]>) {
-	test(`an entry with ${description} rejects and persists nothing`, async () => {
-		respondWith({ data: [entry] });
-		await assertRejects(() => new ModelCatalog(ENTRY).models(networked()), problem);
-		assertEq(capture.persisted, undefined);
-	});
-}
