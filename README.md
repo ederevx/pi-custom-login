@@ -12,6 +12,9 @@ endpoint without editing this package.
 pi install git:github.com/ederevx/pi-custom-login
 ```
 
+Unpinned, it follows the default branch on `pi update --extensions`; append
+`@<tag>` to pin a release tag, and install another tag to move the pin.
+
 The package has no runtime dependencies; it uses the host-provided
 `@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai` and
 `@earendil-works/pi-tui`.
